@@ -1,17 +1,23 @@
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
-from .views import CategoryViewSet, MajorViewSet, ChapterViewSet, ExamGroupViewSet, ExerciseViewSet, UserViewSet, ExamViewSet
-
-router = DefaultRouter()
-router.register(r'categories', CategoryViewSet)
-router.register(r'majors', MajorViewSet)
-router.register(r'chapters', ChapterViewSet)
-router.register(r'examgroups', ExamGroupViewSet)
-router.register(r'users', UserViewSet)
-router.register(r'exams', ExamViewSet)
-# router.register(r'exercises', ExerciseViewSet, basename='exercise')  # 为普通列表指定 basename
-router.register(r'examgroups/(?P<examgroup_id>\d+)/exercises', ExerciseViewSet, basename='examgroup-exercise')
+# core/urls.py
+from django.urls import path
+from .views import (
+    CategoryList, MajorListByCategory, ChapterListByMajor, ExamGroupListByChapter,
+    ExerciseList, AnswerListByExercise, AnalysisListByExercise
+)
 
 urlpatterns = [
-    path('', include(router.urls)),
+    # 新增：显示所有 Category
+    path('categories/', CategoryList.as_view(), name='category-list'),
+    # 1. 根据 category_id 获取 major 列表
+    path('majors/<int:category_id>/', MajorListByCategory.as_view(), name='major-list-by-category'),
+    # 2. 根据 major_id 获取 chapter 列表
+    path('chapters/<int:major_id>/', ChapterListByMajor.as_view(), name='chapter-list-by-major'),
+    # 3. 根据 chapter_id 获取 examgroup 列表
+    path('examgroups/<int:chapter_id>/', ExamGroupListByChapter.as_view(), name='examgroup-list-by-chapter'),
+    # 4. 根据 category/major/chapter/examgroup 获取 exercise 列表
+    path('exercises/', ExerciseList.as_view(), name='exercise-list'),
+    # 5. 根据 exercise_id 获取答案列表
+    path('answers/<str:exercise_id>/', AnswerListByExercise.as_view(), name='answer-list-by-exercise'),
+    # 6. 根据 exercise_id 获取解析列表
+    path('analyses/<str:exercise_id>/', AnalysisListByExercise.as_view(), name='analysis-list-by-exercise'),
 ]

@@ -27,7 +27,7 @@ class Command(BaseCommand):
             with transaction.atomic():
                 for data in batch:
                     # 1. Category (专业)
-                    category, _ = Category.objects.get_or_create(category_name='默认专业')
+                    category, _ = Category.objects.get_or_create(category_name='计算机408')
 
                     # 2. Major (科目)
                     major, _ = Major.objects.get_or_create(
