@@ -16,6 +16,7 @@ urlpatterns = [
     path('examgroups/<int:chapter_id>/', ExamGroupListByChapter.as_view(), name='examgroup-list-by-chapter'),
     # 4. 根据 category/major/chapter/examgroup 获取 exercise 列表
     path('exercises/', ExerciseList.as_view(), name='exercise-list'),
+    path('exercises/<str:exercise_id>/', ExerciseList.as_view(), name='exercise-detail'),  # 支持 PUT
     # 5. 根据 exercise_id 获取答案列表
     path('answers/<str:exercise_id>/', AnswerListByExercise.as_view(), name='answer-list-by-exercise'),
     # 6. 根据 exercise_id 获取解析列表

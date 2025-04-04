@@ -51,10 +51,10 @@ class Question(models.Model):
 
 class ExerciseAnswer(models.Model):
     answer_id = models.AutoField(primary_key=True)
-    exercise = models.ForeignKey(Exercise, on_delete=models.CASCADE)
+    exercise = models.ForeignKey(Exercise, related_name='answers', on_delete=models.CASCADE)
     answer_content = models.TextField(blank=True, null=True) 
     mark = models.CharField(max_length=100, null=True)
-    from_model = models.CharField(max_length=20, null=True)
+    from_model = models.CharField(max_length=20, blank=True, null=True)
     render_type = models.CharField(max_length=20, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     text1 = models.TextField(blank=True, null=True)
@@ -65,7 +65,7 @@ class ExerciseAnswer(models.Model):
 
 class ExerciseAnalysis(models.Model):
     analysis_id = models.AutoField(primary_key=True)
-    exercise = models.ForeignKey(Exercise, on_delete=models.CASCADE)
+    exercise = models.ForeignKey(Exercise, related_name='analyses', on_delete=models.CASCADE)
     analysis_content = models.TextField()
     mark = models.CharField(max_length=20, null=True)
     render_type = models.CharField(max_length=20, null=True)
