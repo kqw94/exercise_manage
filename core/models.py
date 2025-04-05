@@ -77,17 +77,6 @@ class ExerciseAnalysis(models.Model):
 
 
 
-class Exam(models.Model):
-    exam_id = models.AutoField(primary_key=True)
-    from_school = models.CharField(max_length=100,blank=True, null=True)
-    exam_time = models.CharField(max_length=20, blank=True, null=True)
-    exam_code = models.CharField(max_length=20, blank=True, null=True)
-    exam_full_name = models.CharField(max_length=100, blank=True, null=True)
-    text1 = models.TextField(blank=True, null=True)
-
-    class Meta:
-        db_table = 'exams'
-
 
 class ExerciseFrom(models.Model):
     exercise = models.OneToOneField(Exercise, on_delete=models.CASCADE, primary_key=True)
@@ -184,6 +173,25 @@ class ExamGroup(models.Model):
     class Meta:
         db_table = 'exam_groups'
 
+class School(models.Model):
+    school_id = models.AutoField(primary_key=True)
+    name = models.CharField(max_length=100, unique=True)  # 学校名称，唯一约束
+
+    class Meta:
+        db_table = 'schools'
+
+class Exam(models.Model):
+    exam_id = models.AutoField(primary_key=True)
+    category = models.ForeignKey(Category, on_delete=models.CASCADE,  related_name='exams', null=True)
+    school = models.ForeignKey(School, on_delete=models.SET_NULL, related_name='exams', null=True, blank=True)  # 新增外键
+    from_school = models.CharField(max_length=100,blank=True, null=True)
+    exam_time = models.CharField(max_length=20, blank=True, null=True)
+    exam_code = models.CharField(max_length=20, blank=True, null=True)
+    exam_full_name = models.CharField(max_length=100, blank=True, null=True)
+    text1 = models.TextField(blank=True, null=True)
+
+    class Meta:
+        db_table = 'exams'
 
 class Source(models.Model):
     source_id = models.AutoField(primary_key=True)
