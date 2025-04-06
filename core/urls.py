@@ -1,14 +1,36 @@
 from django.urls import path
+from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     CategoryList, MajorListByCategory, ChapterListByMajor, ExamGroupListByChapter,
     ExerciseList, AnswerListByExercise, AnalysisListByExercise, ExerciseTypeList, SourceList, BulkExerciseUpdate,
     ExamSchoolList, ExamTimeList, ExamCodeList, ExamFullNameList, ExamList, ExamDetail,
     # 新增的 CRUD 视图
     CategoryCreate, CategoryDetail, MajorCreate, MajorDetail, SchoolList, SchoolDetail,
-    ChapterCreate, ChapterDetail, ExamGroupCreate, ExamGroupDetail, ExamSchoolListByCategoryId
+    ChapterCreate, ChapterDetail, ExamGroupCreate, ExamGroupDetail, ExamSchoolListByCategoryId,
+    RegisterView, LoginView, LogoutView, UserListView, UserDetailView, RoleListView, 
+    RoleDetailView, RolePermissionListView, RolePermissionDetailView, UserActionLogListView,
+    UserActionLogDetailView, InitializeRolesView, ExportExercisesByCategoryView
 )
 
 urlpatterns = [
+    # 登录注册
+    
+    path('register/', RegisterView.as_view(), name='register'),
+    path('login/', LoginView.as_view(), name='login'),
+    path('logout/', LogoutView.as_view(), name='logout'),
+    path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+
+    # 用户管理
+    path('users/', UserListView.as_view(), name='user_list'),
+    path('users/<int:pk>/', UserDetailView.as_view(), name='user_detail'),
+
+    # 角色管理
+    path('roles/', RoleListView.as_view(), name='role_list'),
+    path('roles/<int:pk>/', RoleDetailView.as_view(), name='role_detail'),
+
+    # 角色权限管理
+    path('role-permissions/', RolePermissionListView.as_view(), name='role_permission_list'),
+    path('role-permissions/<int:pk>/', RolePermissionDetailView.as_view(), name='role_permission_detail'),
     # --- 已有路由保持不变 ---
     # 显示所有 Category
     path('categories/', CategoryList.as_view(), name='category-list'),
@@ -50,4 +72,10 @@ urlpatterns = [
     path('crud/chapters/<int:chapter_id>/', ChapterDetail.as_view(), name='crud-chapter-detail'),
     path('crud/examgroups/create/', ExamGroupCreate.as_view(), name='crud-examgroup-create'),
     path('crud/examgroups/<int:examgroup_id>/', ExamGroupDetail.as_view(), name='crud-examgroup-detail'),
+
+    path('user-action-logs/', UserActionLogListView.as_view(), name='user_action_log_list'),
+    path('user-action-logs/<int:pk>/', UserActionLogDetailView.as_view(), name='user_action_log_detail'),
+    path('initialize-roles/', InitializeRolesView.as_view(), name='initialize_roles'),
+
+    path('export-exercises-by-category/<int:category_id>/', ExportExercisesByCategoryView.as_view(), name='export-exercises-by-category'),
 ]

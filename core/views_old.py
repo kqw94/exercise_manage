@@ -6,18 +6,14 @@ from rest_framework.pagination import PageNumberPagination
 from django.db.models.fields import IntegerField  
 from django.db.models import Q, Func
 from django.db import models 
-from django.http import JsonResponse, FileResponse, StreamingHttpResponse
-import json
-import os
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import login, logout
 from django.contrib.auth.models import Group
-from django.core.serializers.json import DjangoJSONEncoder
 from .models import User, RolePermission, UserActionLog, Role
 from .models import (
     Category, Major, Chapter, ExamGroup, Exercise, ExerciseAnswer, ExerciseAnalysis, Question, ExerciseStem,
-    ExerciseType, Source, ExerciseFrom, Exam, School, ExerciseImage
+    ExerciseType, Source, ExerciseFrom, Exam, School
 )
 from .serializers import (
     CategorySerializer, MajorSerializer, ChapterSerializer, ExamGroupSerializer,
@@ -26,10 +22,6 @@ from .serializers import (
     SchoolSerializer, UserRegisterSerializer, UserLoginSerializer, UserSerializer,
     RoleSerializer, RolePermissionSerializer, UserActionLogSerializer
 )
-from functools import wraps
-from django.http import JsonResponse
-from .tasks import export_exercises_by_category
-
 
 import json
 import logging
@@ -47,22 +39,6 @@ def log_user_action(request, action_type, model_name=None, object_id=None, detai
         details=json.dumps(details) if details else None,
         ip_address=ip_address
     )
-
-def require_permission(model_name, action):
-    def decorator(view_func):
-        @wraps(view_func)
-        def _wrapped_view(self, request, *args, **kwargs):
-            user = request.user
-            if user.is_superuser:
-                return view_func(self, request, *args, **kwargs)
-            if not user.role:
-                return JsonResponse({"error": "No role assigned"}, status=status.HTTP_403_FORBIDDEN)
-            perm = RolePermission.objects.filter(role=user.role, model_name=model_name).first()
-            if not perm or not getattr(perm, f"can_{action}", False):
-                return JsonResponse({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
-            return view_func(self, request, *args, **kwargs)
-        return _wrapped_view
-    return decorator
 
 
 
@@ -90,7 +66,6 @@ class CategoryList(APIView):
 class MajorListByCategory(APIView):
     pagination_class = StandardPagination
 
-    @require_permission('Major', 'read')
     def get(self, request, category_id):
         try:
             majors = Major.objects.filter(category_id=category_id)
@@ -105,7 +80,6 @@ class MajorListByCategory(APIView):
 class ChapterListByMajor(APIView):
     pagination_class = StandardPagination
 
-    @require_permission('Chapter', 'read')
     def get(self, request, major_id):
         try:
             chapters = Chapter.objects.filter(major_id=major_id)
@@ -120,7 +94,6 @@ class ChapterListByMajor(APIView):
 class ExamGroupListByChapter(APIView):
     pagination_class = StandardPagination
 
-    @require_permission('ExamGroup', 'read')
     def get(self, request, chapter_id):
         try:
             exam_groups = ExamGroup.objects.filter(chapter_id=chapter_id)
@@ -137,9 +110,32 @@ class ExamGroupListByChapter(APIView):
 class ExerciseList(APIView):
     pagination_class = StandardPagination
 
-   
-    @require_permission('Exercise', 'read')
+    def get_permissions(self):
+        if self.request.method == 'PUT':
+            return [IsAuthenticated()]
+        return [IsAuthenticated()]
+
+    def check_role_permission(self, user, model_name, action):
+        if user.is_superuser:  # 超级用户拥有所有权限
+            return True
+        if not user.role:  # 如果用户没有角色
+            return False
+        perm = RolePermission.objects.filter(role=user.role, model_name=model_name).first()
+        if not perm:
+            return False
+        if action == 'create':
+            return perm.can_create
+        elif action == 'read':
+            return perm.can_read
+        elif action == 'update':
+            return perm.can_update
+        elif action == 'delete':
+            return perm.can_delete
+        return False
+
     def get(self, request):
+        if not self.check_role_permission(request.user, 'Exercise', 'read'):
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
         
         # 获取查询参数
         category_id = request.query_params.get('category_id')
@@ -233,8 +229,9 @@ class ExerciseList(APIView):
         # log_user_action(request, 'read', 'Exercise')
         return paginator.get_paginated_response(serializer.data)
 
-    @require_permission('Exercise', 'update')
     def put(self, request, exercise_id=None):
+        if not self.check_role_permission(request.user, 'Exercise', 'update'):
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
         
         logger.debug(f"Received PUT request data: {request.data}")
         try:
@@ -346,10 +343,32 @@ class AnalysisListByExercise(APIView):
         
 
 class BulkExerciseUpdate(APIView):
-    
-    @require_permission('Exercise', 'update')
+    permission_classes = [IsAuthenticated]  # 要求用户认证
+
+    def check_role_permission(self, user, model_name, action):
+        """检查用户是否有指定模型的权限"""
+        if user.is_superuser:  # 超级用户拥有所有权限
+            return True
+        if not user.role:  # 如果用户没有角色
+            return False
+        perm = RolePermission.objects.filter(role=user.role, model_name=model_name).first()
+        if not perm:
+            return False
+        if action == 'create':
+            return perm.can_create
+        elif action == 'read':
+            return perm.can_read
+        elif action == 'update':
+            return perm.can_update
+        elif action == 'delete':
+            return perm.can_delete
+        return False
+
     def post(self, request):
-        
+        # 检查更新权限
+        if not self.check_role_permission(request.user, 'Exercise', 'update'):
+            return Response({"error": "Permission denied"}, status=status.HTTP_403_FORBIDDEN)
+
         logger.info(f"Received bulk update request: {request.data}")
         serializer = BulkExerciseUpdateSerializer(data=request.data)
         if serializer.is_valid():
@@ -379,7 +398,6 @@ class BulkExerciseUpdate(APIView):
 class SchoolList(APIView):
     pagination_class = StandardPagination
 
-    @require_permission('School', 'read')
     def get(self, request):
         """获取学校列表（带分页）"""
         schools = School.objects.all()
@@ -388,7 +406,6 @@ class SchoolList(APIView):
         serializer = SchoolSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
-    @require_permission('School', 'create')
     def post(self, request):
         """创建新学校"""
         serializer = SchoolSerializer(data=request.data)
@@ -411,7 +428,6 @@ class SchoolDetail(APIView):
         serializer = SchoolSerializer(school)
         return Response(serializer.data)
 
-    @require_permission('School', 'update')
     def put(self, request, pk):
         """更新学校"""
         school = self.get_object(pk)
@@ -421,7 +437,6 @@ class SchoolDetail(APIView):
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @require_permission('School', 'delete')
     def delete(self, request, pk):
         """删除学校"""
         school = self.get_object(pk)
@@ -431,7 +446,6 @@ class SchoolDetail(APIView):
 class ExamList(APIView):
     pagination_class = StandardPagination
 
-    @require_permission('Exam', 'read')
     def get(self, request):
         exams = Exam.objects.all()
         # 支持单一或联合搜索
@@ -462,7 +476,6 @@ class ExamList(APIView):
         serializer = ExamSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
-    @require_permission('Exam', 'create')
     def post(self, request):
         """创建新试卷"""
         serializer = ExamSerializer(data=request.data)
@@ -485,7 +498,6 @@ class ExamDetail(APIView):
         serializer = ExamSerializer(exam)
         return Response(serializer.data)
 
-    @require_permission('Exam', 'update')
     def put(self, request, pk):
         """更新试卷"""
         exam = self.get_object(pk)
@@ -495,7 +507,6 @@ class ExamDetail(APIView):
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    @require_permission('Exam', 'delete')
     def delete(self, request, pk):
         """删除试卷"""
         exam = self.get_object(pk)
@@ -566,8 +577,6 @@ class ExamFullNameList(APIView):
 
 # Category CRUD
 class CategoryCreate(APIView):
-
-    @require_permission('Category', 'create')
     def post(self, request):
         serializer = CategorySerializer(data=request.data)
         if serializer.is_valid():
@@ -584,7 +593,6 @@ class CategoryDetail(APIView):
         except Category.DoesNotExist:
             return Response({"error": "Category not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    @require_permission('Category', 'update')
     def put(self, request, category_id):
         try:
             category = Category.objects.get(category_id=category_id)
@@ -596,7 +604,6 @@ class CategoryDetail(APIView):
         except Category.DoesNotExist:
             return Response({"error": "Category not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    @require_permission('Category', 'delete')
     def delete(self, request, category_id):
         try:
             category = Category.objects.get(category_id=category_id)
@@ -607,7 +614,6 @@ class CategoryDetail(APIView):
 
 # Major CRUD
 class MajorCreate(APIView):
-    @require_permission('Major', 'create')
     def post(self, request):
         serializer = MajorSerializer(data=request.data)
         if serializer.is_valid():
@@ -624,7 +630,6 @@ class MajorDetail(APIView):
         except Major.DoesNotExist:
             return Response({"error": "Major not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    @require_permission('Major', 'update')
     def put(self, request, major_id):
         try:
             major = Major.objects.get(major_id=major_id)
@@ -636,7 +641,6 @@ class MajorDetail(APIView):
         except Major.DoesNotExist:
             return Response({"error": "Major not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    @require_permission('Major', 'delete')
     def delete(self, request, major_id):
         try:
             major = Major.objects.get(major_id=major_id)
@@ -647,7 +651,6 @@ class MajorDetail(APIView):
 
 # Chapter CRUD
 class ChapterCreate(APIView):
-    @require_permission('Chapter', 'create')
     def post(self, request):
         serializer = ChapterSerializer(data=request.data)
         if serializer.is_valid():
@@ -664,7 +667,6 @@ class ChapterDetail(APIView):
         except Chapter.DoesNotExist:
             return Response({"error": "Chapter not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    @require_permission('Chapter', 'update')
     def put(self, request, chapter_id):
         try:
             chapter = Chapter.objects.get(chapter_id=chapter_id)
@@ -676,7 +678,6 @@ class ChapterDetail(APIView):
         except Chapter.DoesNotExist:
             return Response({"error": "Chapter not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    @require_permission('Chapter', 'delete')
     def delete(self, request, chapter_id):
         try:
             chapter = Chapter.objects.get(chapter_id=chapter_id)
@@ -687,7 +688,6 @@ class ChapterDetail(APIView):
 
 # ExamGroup CRUD
 class ExamGroupCreate(APIView):
-    @require_permission('ExamGroup', 'create')
     def post(self, request):
         serializer = ExamGroupSerializer(data=request.data)
         if serializer.is_valid():
@@ -704,7 +704,6 @@ class ExamGroupDetail(APIView):
         except ExamGroup.DoesNotExist:
             return Response({"error": "ExamGroup not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    @require_permission('ExamGroup', 'update')
     def put(self, request, examgroup_id):
         try:
             examgroup = ExamGroup.objects.get(examgroup_id=examgroup_id)
@@ -716,7 +715,6 @@ class ExamGroupDetail(APIView):
         except ExamGroup.DoesNotExist:
             return Response({"error": "ExamGroup not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    @require_permission('ExamGroup', 'delete')
     def delete(self, request, examgroup_id):
         try:
             examgroup = ExamGroup.objects.get(examgroup_id=examgroup_id)
@@ -772,10 +770,9 @@ class LogoutView(APIView):
 # --- 2. 用户管理接口 ---
 
 class UserListView(APIView):
-    # permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdminUser]
     pagination_class = StandardPagination
 
-    @require_permission('User', 'read')
     def get(self, request):
         users = User.objects.all()
         paginator = self.pagination_class()
@@ -783,7 +780,6 @@ class UserListView(APIView):
         serializer = UserSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
-    @require_permission('User', 'create')
     def post(self, request):
         serializer = UserSerializer(data=request.data)
         if serializer.is_valid():
@@ -798,9 +794,8 @@ class UserListView(APIView):
 
 
 class UserDetailView(APIView):
-    # permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdminUser]
 
-    @require_permission('User', 'update')
     def put(self, request, pk):
         try:
             user = User.objects.get(pk=pk)
@@ -823,10 +818,9 @@ class UserDetailView(APIView):
 # --- 3. 角色管理接口 ---
 
 class RoleListView(APIView):
-    # permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdminUser]
     pagination_class = StandardPagination
 
-    @require_permission('Role', 'read')
     def get(self, request):
         roles = Role.objects.all()
         paginator = self.pagination_class()
@@ -834,7 +828,6 @@ class RoleListView(APIView):
         serializer = RoleSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
-    @require_permission('Role', 'create')
     def post(self, request):
         serializer = RoleSerializer(data=request.data)
         if serializer.is_valid():
@@ -844,7 +837,7 @@ class RoleListView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class RoleDetailView(APIView):
-    # permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdminUser]
 
     def get(self, request, pk):
         try:
@@ -854,7 +847,6 @@ class RoleDetailView(APIView):
         except Role.DoesNotExist:
             return Response({"error": "Role not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    @require_permission('Role', 'update')
     def put(self, request, pk):
         try:
             role = Role.objects.get(pk=pk)
@@ -866,7 +858,6 @@ class RoleDetailView(APIView):
         except Role.DoesNotExist:
             return Response({"error": "Role not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    @require_permission('Role', 'delete')
     def delete(self, request, pk):
         try:
             role = Role.objects.get(pk=pk)
@@ -878,7 +869,7 @@ class RoleDetailView(APIView):
 # --- 角色权限管理 ---
 
 class RolePermissionListView(APIView):
-    # permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdminUser]
     pagination_class = StandardPagination
 
     def get(self, request):
@@ -899,7 +890,7 @@ class RolePermissionListView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class RolePermissionDetailView(APIView):
-    # permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdminUser]
 
     def get(self, request, pk):
         try:
@@ -931,7 +922,7 @@ class RolePermissionDetailView(APIView):
 
 
 class UserActionLogListView(APIView):
-    # permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdminUser]
     pagination_class = StandardPagination
 
     def get(self, request):
@@ -957,7 +948,7 @@ class UserActionLogListView(APIView):
 
 
 class UserActionLogDetailView(APIView):
-    # permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdminUser]
 
     def get(self, request, pk):
         """获取单条操作日志详情"""
@@ -970,7 +961,7 @@ class UserActionLogDetailView(APIView):
         
 
 class InitializeRolesView(APIView):
-    # permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdminUser]
 
     def post(self, request):
         # 定义角色和权限
@@ -1002,129 +993,3 @@ class InitializeRolesView(APIView):
                 )
         
         return Response({"message": "Roles and permissions initialized successfully"}, status=status.HTTP_200_OK)
-    
-
-class ExportExercisesByCategoryView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def check_role_permission(self, user, model_name, action):
-        if user.is_superuser:
-            return True
-        if not user.role:
-            return False
-        perm = user.role.permissions.filter(model_name=model_name).first()
-        if not perm:
-            return False
-        if action == 'read':
-            return perm.can_read
-        return False
-
-    def generate_json_stream(self, exercises):
-        """生成器函数，流式生成 JSON 数据"""
-        logger.info("Starting JSON stream generation")
-        yield '['
-        first = True
-        exercise_count = 0
-
-        for exercise in exercises:
-            try:
-                exercise_count += 1
-                logger.debug(f"Processing exercise: {exercise.exercise_id}")
-                if not first:
-                    yield ','
-                first = False
-
-                exercise_data = {
-                    "exercise_id": exercise.exercise_id,
-                    "category": exercise.category.category_name if exercise.category else None,
-                    "major": exercise.major.major_name if exercise.major else None,
-                    "chapter": exercise.chapter.chapter_name if exercise.chapter else None,
-                    "examgroup": exercise.exam_group.examgroup_name if exercise.exam_group else None,
-                    "source": exercise.source.source_name if exercise.source else None,
-                    "type": exercise.exercise_type.type_name if exercise.exercise_type else None,
-                    "level": exercise.level,
-                    "score": exercise.score,
-                    "stem": exercise.stem.stem_content if exercise.stem else None,
-                    "questions": [
-                        {
-                            "question_order": q.question_order,
-                            "question_stem": q.question_stem,
-                            "question_answer": q.question_answer,
-                            "question_analysis": q.question_analysis
-                        } for q in exercise.questions.all()
-                    ],
-                    "answer": [
-                        {
-                            "answer_content": a.answer_content,
-                            "mark": a.mark,
-                            "from_model": a.from_model,
-                            "render_type": a.render_type
-                        } for a in exercise.answers.all()
-                    ],
-                    "analysis": [
-                        {
-                            "analysis_content": a.analysis_content,
-                            "mark": a.mark,
-                            "render_type": a.render_type
-                        } for a in exercise.analyses.all()
-                    ],
-                    "exerciseFrom": {
-                        "isOfficialExercise": exercise.exercise_from.is_official_exercise if exercise.exercise_from else 0,
-                        "fromSchool": exercise.exercise_from.exam.from_school if exercise.exercise_from and exercise.exercise_from.exam else "",
-                        "examTime": exercise.exercise_from.exam.exam_time if exercise.exercise_from and exercise.exercise_from.exam else "",
-                        "examCode": exercise.exercise_from.exam.exam_code if exercise.exercise_from and exercise.exercise_from.exam else "",
-                        "examFullName": exercise.exercise_from.exam.exam_full_name if exercise.exercise_from and exercise.exercise_from.exam else "",
-                        "exerciseNumber": exercise.exercise_from.exercise_number if exercise.exercise_from else 0,
-                        "materialName": exercise.exercise_from.material_name if exercise.exercise_from else "",
-                        "section": exercise.exercise_from.section if exercise.exercise_from else "",
-                        "pageNumber": exercise.exercise_from.page_number if exercise.exercise_from else 0
-                    },
-                    "image_links": [
-                        {
-                            "image_link": img.image_link,
-                            "source_type": img.source_type,
-                            "is_deprecated": img.is_deprecated,
-                            "ocr_result": img.ocr_result
-                        } for img in ExerciseImage.objects.filter(exercise=exercise)  # 临时修复
-                    ]
-                }
-                yield json.dumps(exercise_data, ensure_ascii=False, cls=DjangoJSONEncoder)
-            except Exception as e:
-                logger.error(f"Error processing exercise {exercise.exercise_id}: {str(e)}")
-                continue  # 跳过出错的记录
-
-        yield ']'
-        logger.info(f"Finished generating JSON stream, total exercises: {exercise_count}")
-
-    def get(self, request, category_id):
-        if not self.check_role_permission(request.user, 'Exercise', 'read'):
-            return Response({"error": "Permission denied"}, status=403)
-
-        try:
-            category = Category.objects.get(category_id=category_id)
-        except Category.DoesNotExist:
-            return Response({"error": "Category not found"}, status=404)
-
-        # 查询优化：分块加载，避免 prefetch_related('exerciseimage_set')
-        exercises = Exercise.objects.filter(category=category).select_related(
-            'exercise_type', 'category', 'major', 'chapter', 'exam_group', 'source', 'stem', 'answer', 'analysis', 'exercise_from'
-        ).prefetch_related('questions', 'answers', 'analyses', 'exercise_from__exam').iterator(chunk_size=100)
-
-        total_exercises = Exercise.objects.filter(category=category).count()
-        logger.info(f"Exporting {total_exercises} exercises for category {category_id}")
-
-        response = StreamingHttpResponse(
-            self.generate_json_stream(exercises),
-            content_type='application/json'
-        )
-        response['Content-Disposition'] = f'attachment; filename="exercises_category_{category_id}.json"'
-        return response
-
-# class DownloadExportView(APIView):
-#     permission_classes = [IsAuthenticated]
-
-#     def get(self, request, category_id):
-#         filename = f"media/exports/exercises_category_{category_id}.json"
-#         if os.path.exists(filename):
-#             return FileResponse(open(filename, 'rb'), as_attachment=True, filename=f"exercises_category_{category_id}.json")
-#         return Response({"error": "文件尚未生成，请稍后重试"}, status=404)

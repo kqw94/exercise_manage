@@ -1,8 +1,12 @@
 # core/serializers.py
 from rest_framework import serializers
+from django.contrib.auth import authenticate
+from django.contrib.auth.models import Group
+
 from .models import (
     Category, Major, Chapter, ExamGroup, Exercise, ExerciseStem, Question,
-    ExerciseAnswer, ExerciseAnalysis, ExerciseType, Source, ExerciseFrom, Exam, School
+    ExerciseAnswer, ExerciseAnalysis, ExerciseType, Source, ExerciseFrom, Exam, School,
+    User, RolePermission, UserActionLog, Role
 )
 import logging
 
@@ -156,3 +160,90 @@ class BulkExerciseUpdateSerializer(serializers.Serializer):
         if missing_ids:
             raise serializers.ValidationError(f"Exercises not found: {missing_ids}")
         return value
+    
+
+
+# 角色序列化器
+class RoleSerializer(serializers.ModelSerializer):
+    groups = serializers.SlugRelatedField(
+        many=True, slug_field='name', queryset=Group.objects.all(), required=False
+    )
+
+    class Meta:
+        model = Role
+        fields = ['id', 'name', 'description', 'groups']
+
+
+# 用户注册序列化器
+class UserRegisterSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, min_length=8)
+    confirm_password = serializers.CharField(write_only=True)
+    role = serializers.PrimaryKeyRelatedField(queryset=Role.objects.all(), required=False)
+
+    class Meta:
+        model = User
+        fields = ['username', 'email', 'password', 'confirm_password', 'role', 'phone']
+
+    def validate(self, data):
+        if data['password'] != data['confirm_password']:
+            raise serializers.ValidationError("Passwords do not match")
+        return data
+
+    def create(self, validated_data):
+        validated_data.pop('confirm_password')
+        role = validated_data.pop('role', None) or Role.objects.get(name='user')  # 默认角色为 'user'
+        user = User.objects.create_user(
+            username=validated_data['username'],
+            email=validated_data.get('email', ''),
+            password=validated_data['password'],
+            phone=validated_data.get('phone', ''),
+            role=role
+        )
+        return user
+
+
+# 用户登录序列化器（不变）
+class UserLoginSerializer(serializers.Serializer):
+    username = serializers.CharField()
+    password = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        user = authenticate(username=data['username'], password=data['password'])
+        if user and user.is_active:
+            return user
+        raise serializers.ValidationError("Invalid credentials")
+
+
+# 用户信息序列化器
+class UserSerializer(serializers.ModelSerializer):
+    role = RoleSerializer(read_only=True)  # 只读，用于返回数据
+    role_id = serializers.PrimaryKeyRelatedField(
+        queryset=Role.objects.all(), source='role', required=False, allow_null=True, write_only=True
+    )  # 用于接收 ID
+    groups = serializers.SlugRelatedField(
+        many=True, slug_field='name', queryset=Group.objects.all(), required=False
+    )
+
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email', 'role', 'role_id', 'phone', 'is_active', 'groups', 'date_joined']
+        read_only_fields = ['date_joined']
+
+
+
+# 角色权限序列化器
+class RolePermissionSerializer(serializers.ModelSerializer):
+    role = serializers.PrimaryKeyRelatedField(queryset=Role.objects.all())
+
+    class Meta:
+        model = RolePermission
+        fields = ['id', 'role', 'model_name', 'can_create', 'can_read', 'can_update', 'can_delete']
+
+
+# 用户操作日志序列化器（不变）
+class UserActionLogSerializer(serializers.ModelSerializer):
+    user = serializers.SlugRelatedField(slug_field='username', read_only=True)
+
+    class Meta:
+        model = UserActionLog
+        fields = ['id', 'user', 'action_type', 'model_name', 'object_id', 'details', 'timestamp', 'ip_address']
