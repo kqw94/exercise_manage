@@ -5,7 +5,7 @@ from django.contrib.contenttypes.models import ContentType
 class Exercise(models.Model):
     exercise_id = models.CharField(max_length=50, primary_key=True)
     exercise_type = models.ForeignKey('ExerciseType', on_delete=models.SET_NULL, null=True)
-    category = models.ForeignKey('Category', on_delete=models.SET_NULL, null=True)
+    category = models.ForeignKey('Category', on_delete=models.SET_NULL, null=True, db_index=True)
     major = models.ForeignKey('Major', on_delete=models.SET_NULL, null=True)
     chapter = models.ForeignKey('Chapter', on_delete=models.SET_NULL, null=True)
     exam_group = models.ForeignKey('ExamGroup', on_delete=models.SET_NULL, null=True)

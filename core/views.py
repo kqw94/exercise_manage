@@ -28,7 +28,6 @@ from .serializers import (
 )
 from functools import wraps
 from django.http import JsonResponse
-from .tasks import export_exercises_by_category
 
 
 import json
@@ -1005,7 +1004,7 @@ class InitializeRolesView(APIView):
     
 
 class ExportExercisesByCategoryView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsAdminUser]
 
     def check_role_permission(self, user, model_name, action):
         if user.is_superuser:
@@ -1085,13 +1084,13 @@ class ExportExercisesByCategoryView(APIView):
                             "source_type": img.source_type,
                             "is_deprecated": img.is_deprecated,
                             "ocr_result": img.ocr_result
-                        } for img in ExerciseImage.objects.filter(exercise=exercise)  # 临时修复
+                        } for img in exercise.exercise_images.all()  # 使用反向映射
                     ]
                 }
                 yield json.dumps(exercise_data, ensure_ascii=False, cls=DjangoJSONEncoder)
             except Exception as e:
                 logger.error(f"Error processing exercise {exercise.exercise_id}: {str(e)}")
-                continue  # 跳过出错的记录
+                continue
 
         yield ']'
         logger.info(f"Finished generating JSON stream, total exercises: {exercise_count}")
@@ -1105,10 +1104,12 @@ class ExportExercisesByCategoryView(APIView):
         except Category.DoesNotExist:
             return Response({"error": "Category not found"}, status=404)
 
-        # 查询优化：分块加载，避免 prefetch_related('exerciseimage_set')
+        # 使用 prefetch_related 预加载 exercise_images
         exercises = Exercise.objects.filter(category=category).select_related(
             'exercise_type', 'category', 'major', 'chapter', 'exam_group', 'source', 'stem', 'answer', 'analysis', 'exercise_from'
-        ).prefetch_related('questions', 'answers', 'analyses', 'exercise_from__exam').iterator(chunk_size=100)
+        ).prefetch_related(
+            'questions', 'answers', 'analyses', 'exercise_from__exam', 'exercise_images'  # 预加载图片
+        ).iterator(chunk_size=500)
 
         total_exercises = Exercise.objects.filter(category=category).count()
         logger.info(f"Exporting {total_exercises} exercises for category {category_id}")
@@ -1119,7 +1120,7 @@ class ExportExercisesByCategoryView(APIView):
         )
         response['Content-Disposition'] = f'attachment; filename="exercises_category_{category_id}.json"'
         return response
-
+    
 # class DownloadExportView(APIView):
 #     permission_classes = [IsAuthenticated]
 

@@ -2,5 +2,3 @@ django
 djangorestframework
 mysqlclient
 djangorestframework-simplejwt
-celery
-redis
