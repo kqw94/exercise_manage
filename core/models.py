@@ -3,12 +3,12 @@ from django.contrib.auth.models import AbstractUser, Group, Permission
 from django.contrib.contenttypes.models import ContentType
 
 class Exercise(models.Model):
-    exercise_id = models.CharField(max_length=50, primary_key=True)
+    exercise_id = models.AutoField(primary_key=True)
     exercise_type = models.ForeignKey('ExerciseType', on_delete=models.SET_NULL, null=True)
     category = models.ForeignKey('Category', on_delete=models.SET_NULL, null=True, db_index=True)
-    major = models.ForeignKey('Major', on_delete=models.SET_NULL, null=True)
-    chapter = models.ForeignKey('Chapter', on_delete=models.SET_NULL, null=True)
-    exam_group = models.ForeignKey('ExamGroup', on_delete=models.SET_NULL, null=True)
+    major = models.ForeignKey('Major', on_delete=models.SET_NULL, null=True, db_index=True)
+    chapter = models.ForeignKey('Chapter', on_delete=models.SET_NULL, null=True, db_index=True)
+    exam_group = models.ForeignKey('ExamGroup', on_delete=models.SET_NULL, null=True, db_index=True)
    
     exercise_from = models.ForeignKey('ExerciseFrom', on_delete=models.SET_NULL, null=True, related_name='exercise_from')
 
@@ -22,6 +22,7 @@ class Exercise(models.Model):
     text1 = models.TextField(blank=True, null=True)
 
     class Meta:
+        ordering = ['exercise_id']
         db_table = 'exercises'
 
 
@@ -48,6 +49,7 @@ class Question(models.Model):
     
     class Meta:
         db_table = 'questions'
+        unique_together = ['exercise', 'question_order']
 
 
 class ExerciseAnswer(models.Model):
@@ -158,11 +160,11 @@ class ExamGroup(models.Model):
 
 class School(models.Model):
     school_id = models.AutoField(primary_key=True)
-    name = models.CharField(max_length=100, unique=True)  # 学校名称，唯一约束
+    name = models.CharField(max_length=100)  # 学校名称，唯一约束
 
     class Meta:
         db_table = 'schools'
-
+ 
 class Exam(models.Model):
     exam_id = models.AutoField(primary_key=True)
     category = models.ForeignKey(Category, on_delete=models.CASCADE,  related_name='exams', null=True)

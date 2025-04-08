@@ -32,148 +32,171 @@ class Command(BaseCommand):
         if not isinstance(exercises_data, list):
             exercises_data = [exercises_data]
 
-        # 使用事务确保数据一致性
+        # 使用事务确保数据一致性，并批量导入
         with transaction.atomic():
+            # 预创建外键对象
+            categories = self.pre_create_objects(Category, 'category_name', exercises_data, 'category')
+            majors = self.pre_create_objects(Major, 'major_name', exercises_data, 'major', category_map=categories)
+            chapters = self.pre_create_objects(Chapter, 'chapter_name', exercises_data, 'chapter', major_map=majors)
+            exam_groups = self.pre_create_objects(ExamGroup, 'examgroup_name', exercises_data, 'examgroup', chapter_map=chapters, allow_null=True)
+            sources = self.pre_create_objects(Source, 'source_name', exercises_data, 'source')
+            exercise_types = self.pre_create_objects(ExerciseType, 'type_name', exercises_data, 'type')
+            schools = self.pre_create_objects(School, 'name', exercises_data, 'exerciseFrom.fromSchool', allow_null=True)
+
+            exercises_to_create = []
+            stems_to_create = []
+            questions_to_create = []
+            answers_to_create = []
+            analyses_to_create = []
+            exercise_froms_to_create = []
+            images_to_create = []
+
             for data in exercises_data:
                 try:
-                    self.import_exercise(data)
-                    self.stdout.write(self.style.SUCCESS(f"Successfully imported exercise {data['exercise_id']}"))
+                    exercise = self.import_exercise(data, categories, majors, chapters, exam_groups, sources, exercise_types, schools,
+                                                   exercises_to_create, stems_to_create, questions_to_create, answers_to_create,
+                                                   analyses_to_create, exercise_froms_to_create, images_to_create)
+                    self.stdout.write(self.style.SUCCESS(f"Imported exercise with new ID {exercise.exercise_id}"))
                 except Exception as e:
-                    self.stdout.write(self.style.ERROR(f"Error importing exercise {data['exercise_id']}: {str(e)}"))
+                    self.stdout.write(self.style.ERROR(f"Error importing exercise: {str(e)}"))
                     continue
 
-        self.stdout.write(self.style.SUCCESS('All exercises imported successfully'))
+            # 批量创建
+            Exercise.objects.bulk_create(exercises_to_create, batch_size=1000)
+            ExerciseStem.objects.bulk_create(stems_to_create, batch_size=1000)
+            Question.objects.bulk_create(questions_to_create, batch_size=1000)
+            ExerciseAnswer.objects.bulk_create(answers_to_create, batch_size=1000)
+            ExerciseAnalysis.objects.bulk_create(analyses_to_create, batch_size=1000)
+            ExerciseFrom.objects.bulk_create(exercise_froms_to_create, batch_size=1000)
+            ExerciseImage.objects.bulk_create(images_to_create, batch_size=1000)
 
-    def import_exercise(self, data):
-        # 1. 创建或获取外键依赖的实例
-        category, _ = Category.objects.get_or_create(category_name=data['category'])
-        major, _ = Major.objects.get_or_create(major_name=data['major'], category=category)
-        chapter, _ = Chapter.objects.get_or_create(chapter_name=data['chapter'], major=major)
-        source, _ = Source.objects.get_or_create(source_name=data['source'])
-        exercise_type, _ = ExerciseType.objects.get_or_create(type_name=data['type'])
+            # 更新外键关系
+            self.update_foreign_keys(exercises_to_create)
 
-        # 处理 ExamGroup（允许为空）
-        exam_group = None
-        if data.get('examgroup'):
-            exam_group, _ = ExamGroup.objects.get_or_create(
-                examgroup_name=data['examgroup'],
-                chapter=chapter
-            )
+        self.stdout.write(self.style.SUCCESS(f'Successfully imported {len(exercises_to_create)} exercises'))
 
-        # 处理 School 和 Exam
-        exercise_from_data = data['exerciseFrom']
-        school = None
-        if exercise_from_data.get('fromSchool'):
-            school, _ = School.objects.get_or_create(name=exercise_from_data['fromSchool'])
+    def pre_create_objects(self, model, field_name, data_list, json_key, category_map=None, major_map=None, chapter_map=None, allow_null=False):
+        """预创建外键对象并返回映射"""
+        existing = {getattr(obj, field_name): obj for obj in model.objects.all()}
+        to_create = []
+        for data in data_list:
+            value = self.get_nested_value(data, json_key)
+            if allow_null and (value is None or value == ''):
+                continue
+            if value and value not in existing:
+                obj = model(**{field_name: value})
+                if category_map and 'category' in data:
+                    obj.category = category_map[data['category']]
+                if major_map and 'major' in data:
+                    obj.major = major_map[data['major']]
+                if chapter_map and 'examgroup' in data and data['examgroup']:
+                    obj.chapter = chapter_map[data['chapter']]
+                to_create.append(obj)
+        if to_create:
+            model.objects.bulk_create(to_create)
+            existing.update({getattr(obj, field_name): obj for obj in model.objects.filter(**{f'{field_name}__in': [getattr(o, field_name) for o in to_create]})})
+        return existing
 
+    def get_nested_value(self, data, key):
+        """获取嵌套字段值"""
+        keys = key.split('.')
+        value = data
+        for k in keys:
+            value = value.get(k, '') if isinstance(value, dict) else ''
+        return value
+
+    def import_exercise(self, data, categories, majors, chapters, exam_groups, sources, exercise_types, schools,
+                       exercises_to_create, stems_to_create, questions_to_create, answers_to_create,
+                       analyses_to_create, exercise_froms_to_create, images_to_create):
+        """创建 Exercise 及其关联对象"""
+        # 创建 Exercise（exercise_id 由数据库自增）
+        exercise = Exercise(
+            exercise_type=exercise_types[data.get('type', '')],
+            category=categories[data.get('category', '')],
+            major=majors[data.get('major', '')],
+            chapter=chapters[data.get('chapter', '')],
+            exam_group=exam_groups.get(data.get('examgroup')) if data.get('examgroup') else None,
+            source=sources[data.get('source', '')],
+            level=data.get('level', 1),
+            score=data.get('score', 0)
+        )
+        exercises_to_create.append(exercise)
+
+        # 创建 ExerciseStem
+        if data.get('stem'):
+            stems_to_create.append(ExerciseStem(exercise=exercise, stem_content=data['stem']))
+
+        # 创建 Question
+        for q_data in data.get('questions', []):
+            questions_to_create.append(Question(
+                exercise=exercise,
+                question_order=q_data.get('questionOrder', 0),
+                question_stem=q_data.get('questionStem', ''),
+                question_answer=q_data.get('questionAnswer', ''),
+                question_analysis=q_data.get('questionAnalysis', '')
+            ))
+
+        # 创建 ExerciseAnswer
+        for ans_data in data.get('answer', []):
+            answers_to_create.append(ExerciseAnswer(
+                exercise=exercise,
+                answer_content=ans_data.get('answer_content', ''),
+                mark=ans_data.get('mark', ''),
+                from_model=ans_data.get('from_model', ''),
+                render_type=ans_data.get('render_type', '')
+            ))
+
+        # 创建 ExerciseAnalysis
+        for ana_data in data.get('analysis', []):
+            analyses_to_create.append(ExerciseAnalysis(
+                exercise=exercise,
+                analysis_content=ana_data.get('analysis_content', ''),
+                mark=ana_data.get('mark', ''),
+                render_type=ana_data.get('render_type', '')
+            ))
+
+        # 创建 Exam 和 ExerciseFrom
+        exercise_from_data = data.get('exerciseFrom', {})
+        school = schools.get(exercise_from_data.get('fromSchool', '')) if exercise_from_data.get('fromSchool') else None
         exam, _ = Exam.objects.get_or_create(
-            category=category,
+            category=categories[data.get('category', '')],
             school=school,
             from_school=exercise_from_data.get('fromSchool', ''),
             exam_time=exercise_from_data.get('examTime', ''),
             exam_code=exercise_from_data.get('examCode', ''),
             exam_full_name=exercise_from_data.get('examFullName', ''),
         )
-
-        # 2. 创建 Exercise 实例
-        exercise, created = Exercise.objects.get_or_create(
-            exercise_id=data['exercise_id'],
-            defaults={
-                'exercise_type': exercise_type,
-                'category': category,
-                'major': major,
-                'chapter': chapter,
-                'exam_group': exam_group,
-                'source': source,
-                'level': data.get('level', 1),  # 默认值为 1
-                'score': data.get('score', 0),  # 默认值为 0
-            }
-        )
-
-        # 3. 创建 ExerciseStem
-        stem, _ = ExerciseStem.objects.get_or_create(
+        exercise_froms_to_create.append(ExerciseFrom(
             exercise=exercise,
-            stem_content=data['stem']
-        )
-        exercise.stem = stem
-        exercise.save()
+            exam=exam,
+            is_official_exercise=exercise_from_data.get('isOfficialExercise', 0),
+            exercise_number=exercise_from_data.get('exerciseNumber', 1),
+            material_name=exercise_from_data.get('materialName', ''),
+            section=exercise_from_data.get('section', ''),
+            page_number=exercise_from_data.get('pageNumber', 0)
+        ))
 
-        # 4. 创建 Question
-        for q_data in data.get('questions', []):
-            Question.objects.get_or_create(
-                exercise=exercise,
-                question_order=q_data['questionOrder'],
-                defaults={
-                    'question_stem': q_data.get('questionStem', ''),
-                    'question_answer': q_data['questionAnswer'],
-                    'question_analysis': q_data.get('questionAnalysis'),
-                }
-            )
-
-        # 5. 创建 ExerciseAnswer（最后一个为主答案）
-        for ans_data in data.get('answer', []):
-            answer, _ = ExerciseAnswer.objects.get_or_create(
-                exercise=exercise,
-                answer_content=ans_data['answer_content'],
-                mark=ans_data['mark'],
-                defaults={
-                    'from_model': ans_data.get('from_model', ''),
-                    'render_type': ans_data.get('render_type', ''),
-                }
-            )
-        # 设置最后一个为主答案
-        if data.get('answer'):
-            last_answer = data['answer'][-1]
-            exercise.answer = ExerciseAnswer.objects.get(
-                exercise=exercise,
-                answer_content=last_answer['answer_content'],
-                mark=last_answer['mark']
-            )
-            exercise.save()
-
-        # 6. 创建 ExerciseAnalysis（最后一个为主解析）
-        for ana_data in data.get('analysis', []):
-            analysis, _ = ExerciseAnalysis.objects.get_or_create(
-                exercise=exercise,
-                analysis_content=ana_data['analysis_content'],
-                mark=ana_data['mark'],
-                defaults={
-                    'render_type': ana_data.get('render_type', ''),
-                }
-            )
-        # 设置最后一个为主解析
-        if data.get('analysis'):
-            last_analysis = data['analysis'][-1]
-            exercise.analysis = ExerciseAnalysis.objects.get(
-                exercise=exercise,
-                analysis_content=last_analysis['analysis_content'],
-                mark=last_analysis['mark']
-            )
-            exercise.save()
-
-        # 7. 创建 ExerciseFrom
-        exercise_from, _ = ExerciseFrom.objects.get_or_create(
-            exercise=exercise,
-            defaults={
-                'exam': exam,
-                'is_official_exercise': exercise_from_data.get('isOfficialExercise', 0),
-                'exercise_number': exercise_from_data.get('exerciseNumber', 1),
-                'material_name': exercise_from_data.get('materialName', ''),
-                'section': exercise_from_data.get('section', ''),
-                'page_number': exercise_from_data.get('pageNumber', 0),
-            }
-        )
-        exercise.exercise_from = exercise_from
-        exercise.save()
-
-        # 8. 创建 ExerciseImage
+        # 创建 ExerciseImage
         for img_data in data.get('image_links', []):
-            ExerciseImage.objects.get_or_create(
+            images_to_create.append(ExerciseImage(
                 exercise=exercise,
-                image_link=img_data['image_link'],
-                defaults={
-                    'source_type': img_data['source_type'],
-                    'is_deprecated': img_data['is_deprecated'],
-                    'ocr_result': img_data.get('ocr_result', ''),
-                }
-            )
+                image_link=img_data.get('image_link', ''),
+                source_type=img_data.get('source_type', 'stem'),
+                is_deprecated=img_data.get('is_deprecated', False),
+                ocr_result=img_data.get('ocr_result', '')
+            ))
+
+        return exercise
+
+    def update_foreign_keys(self, exercises):
+        """更新 Exercise 的外键关系"""
+        for exercise in exercises:
+            if ExerciseStem.objects.filter(exercise=exercise).exists():
+                exercise.stem = ExerciseStem.objects.filter(exercise=exercise).first()
+            if ExerciseAnswer.objects.filter(exercise=exercise).exists():
+                exercise.answer = ExerciseAnswer.objects.filter(exercise=exercise).last()
+            if ExerciseAnalysis.objects.filter(exercise=exercise).exists():
+                exercise.analysis = ExerciseAnalysis.objects.filter(exercise=exercise).last()
+            if ExerciseFrom.objects.filter(exercise=exercise).exists():
+                exercise.exercise_from = ExerciseFrom.objects.filter(exercise=exercise).first()
+            exercise.save()

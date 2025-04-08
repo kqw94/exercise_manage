@@ -9,7 +9,8 @@ from .views import (
     ChapterCreate, ChapterDetail, ExamGroupCreate, ExamGroupDetail, ExamSchoolListByCategoryId,
     RegisterView, LoginView, LogoutView, UserListView, UserDetailView, RoleListView, 
     RoleDetailView, RolePermissionListView, RolePermissionDetailView, UserActionLogListView,
-    UserActionLogDetailView, InitializeRolesView, ExportExercisesByCategoryView
+    UserActionLogDetailView, InitializeRolesView, ExportExercisesByCategoryView, ImportExercisesView,
+    BulkExerciseCreateView
 )
 
 urlpatterns = [
@@ -78,4 +79,7 @@ urlpatterns = [
     path('initialize-roles/', InitializeRolesView.as_view(), name='initialize_roles'),
 
     path('export-exercises-by-category/<int:category_id>/', ExportExercisesByCategoryView.as_view(), name='export-exercises-by-category'),
+    path('import-exercises/', ImportExercisesView.as_view(), name='import_exercises'),
+    path('exercises/bulk/', BulkExerciseCreateView.as_view(), name='bulk-exercise-create'),
+
 ]
