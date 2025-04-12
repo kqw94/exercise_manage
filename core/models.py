@@ -4,23 +4,24 @@ from django.contrib.contenttypes.models import ContentType
 
 class Exercise(models.Model):
     exercise_id = models.AutoField(primary_key=True)
-    exercise_type = models.ForeignKey('ExerciseType', on_delete=models.SET_NULL, null=True)
+    exercise_type = models.ForeignKey('ExerciseType', on_delete=models.SET_NULL, null=True, db_index=True)
     category = models.ForeignKey('Category', on_delete=models.SET_NULL, null=True, db_index=True)
     major = models.ForeignKey('Major', on_delete=models.SET_NULL, null=True, db_index=True)
     chapter = models.ForeignKey('Chapter', on_delete=models.SET_NULL, null=True, db_index=True)
     exam_group = models.ForeignKey('ExamGroup', on_delete=models.SET_NULL, null=True, db_index=True)
    
-    exercise_from = models.ForeignKey('ExerciseFrom', on_delete=models.SET_NULL, null=True, related_name='exercise_from')
+    exercise_from = models.ForeignKey('ExerciseFrom', on_delete=models.SET_NULL, null=True, related_name='exercise_from', db_index=True)
 
-    source = models.ForeignKey('Source', on_delete=models.SET_NULL, null=True)
-    stem = models.ForeignKey('ExerciseStem', on_delete=models.SET_NULL, null=True, related_name='exercise_stem')
-    answer = models.ForeignKey('ExerciseAnswer',on_delete=models.SET_NULL, null=True, related_name='exercise_answer')
-    analysis = models.ForeignKey('ExerciseAnalysis',on_delete=models.SET_NULL, null=True, related_name='exercise_analysis')
-    level = models.IntegerField(default=1)
-    score = models.IntegerField(blank=True, null=True)
+    source = models.ForeignKey('Source', on_delete=models.SET_NULL, null=True, db_index=True)
+    stem = models.ForeignKey('ExerciseStem', on_delete=models.SET_NULL, null=True, related_name='exercise_stem', db_index=True)
+    answer = models.ForeignKey('ExerciseAnswer',on_delete=models.SET_NULL, null=True, related_name='exercise_answer', db_index=True)
+    analysis = models.ForeignKey('ExerciseAnalysis',on_delete=models.SET_NULL, null=True, related_name='exercise_analysis', db_index=True)
+    level = models.IntegerField(default=1, db_index=True)
+    score = models.IntegerField(blank=True, null=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     text1 = models.TextField(blank=True, null=True)
 
+    
     class Meta:
         ordering = ['exercise_id']
         db_table = 'exercises'
@@ -68,7 +69,7 @@ class ExerciseAnswer(models.Model):
 
 class ExerciseAnalysis(models.Model):
     analysis_id = models.AutoField(primary_key=True)
-    exercise = models.ForeignKey(Exercise, related_name='analyses', on_delete=models.CASCADE)
+    exercise = models.ForeignKey(Exercise, related_name='analyses', null=True, on_delete=models.CASCADE)
     analysis_content = models.TextField()
     mark = models.CharField(max_length=20, null=True)
     from_model = models.CharField(max_length=20, blank=True, null=True)  # 新增字段
@@ -84,7 +85,7 @@ class ExerciseAnalysis(models.Model):
 
 class ExerciseFrom(models.Model):
     exercise = models.OneToOneField(Exercise, on_delete=models.CASCADE, primary_key=True)
-    exam = models.ForeignKey('Exam', on_delete=models.SET_NULL, null=True)
+    exam = models.ForeignKey('Exam', on_delete=models.SET_NULL, null=True, db_index=True)
     is_official_exercise = models.IntegerField(blank=True, null=True)
     exercise_number = models.IntegerField(default=1, blank=True, null=True)
     material_name = models.CharField(max_length=100,blank=True, null=True)
@@ -167,11 +168,11 @@ class School(models.Model):
  
 class Exam(models.Model):
     exam_id = models.AutoField(primary_key=True)
-    category = models.ForeignKey(Category, on_delete=models.CASCADE,  related_name='exams', null=True)
-    school = models.ForeignKey(School, on_delete=models.SET_NULL, related_name='exams', null=True, blank=True)  # 新增外键
-    from_school = models.CharField(max_length=100,blank=True, null=True)
-    exam_time = models.CharField(max_length=20, blank=True, null=True)
-    exam_code = models.CharField(max_length=20, blank=True, null=True)
+    category = models.ForeignKey(Category, on_delete=models.SET_NULL,  related_name='exams', null=True)
+    school = models.ForeignKey(School, on_delete=models.SET_NULL, related_name='exams', null=True, blank=True, db_index=True)  # 新增外键
+    from_school = models.CharField(max_length=100,blank=True, null=True, db_index=True)
+    exam_time = models.CharField(max_length=20, blank=True, null=True, db_index=True)
+    exam_code = models.CharField(max_length=20, blank=True, null=True, db_index=True)
     exam_full_name = models.CharField(max_length=100, blank=True, null=True)
     text1 = models.TextField(blank=True, null=True)
 
@@ -195,7 +196,7 @@ class ExerciseType(models.Model):
 
 
 class KnowledgeTag(models.Model):
-    tag_id = models.CharField(max_length=50, primary_key=True)
+    tag_id = models.AutoField(primary_key=True)
     tag_name = models.CharField(max_length=100)
     category = models.ForeignKey(Category, on_delete=models.SET_NULL,  related_name='knowledge_tags', null=True)
     text1 = models.TextField(blank=True, null=True)

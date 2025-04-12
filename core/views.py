@@ -27,7 +27,8 @@ from .serializers import (
     ExerciseSerializer, ExerciseAnswerSerializer, ExerciseAnalysisSerializer, QuestionSerializer,
     ExerciseTypeSerializer, SourceSerializer, BulkExerciseUpdateSerializer, ExamSerializer,
     SchoolSerializer, UserRegisterSerializer, UserLoginSerializer, UserSerializer,
-    RoleSerializer, RolePermissionSerializer, UserActionLogSerializer, BulkExerciseSerializer
+    RoleSerializer, RolePermissionSerializer, UserActionLogSerializer, BulkExerciseSerializer,
+    ExerciseWriteSerializer
 )
 from functools import wraps
 from django.http import JsonResponse
@@ -134,6 +135,8 @@ class ExamGroupListByChapter(APIView):
             return Response({"error": "Chapter not found"}, status=status.HTTP_404_NOT_FOUND)
 
 
+
+
 # 4. 根据 category/major/chapter/examgroup 获取 exercise 列表（包含 questions），支持搜索
 # 复用并扩展 ExerciseList，支持所有筛选条件
 class ExerciseList(APIView):
@@ -163,10 +166,14 @@ class ExerciseList(APIView):
         exam_full_name = request.query_params.get('exam_full_name')
 
         # 基础查询集
+        # exercises = Exercise.objects.select_related(
+        #     'category', 'major', 'chapter', 'exam_group', 'source', 'exercise_type',
+        #     'stem', 'answer', 'analysis', 'exercise_from', 'exercise_from__exam'
+        #     ).prefetch_related('questions', 'answers', 'analyses')
+
         exercises = Exercise.objects.select_related(
-            'category', 'major', 'chapter', 'exam_group', 'source', 'exercise_type',
-            'stem', 'answer', 'analysis', 'exercise_from', 'exercise_from__exam'
-            ).prefetch_related('questions', 'answers', 'analyses')
+                'category', 'major', 'chapter', 'exam_group', 'source', 'exercise_type', 
+                ).prefetch_related('questions')
 
         # 层级筛选
         if category_id:
@@ -1201,6 +1208,7 @@ class ImportExercisesView(APIView):
                                   status=status.HTTP_201_CREATED)
             else:
                 logger.error(f"Bulk validation errors: {bulk_serializer.errors}")
+                # logger.error(f"Bulk validation errors: {traceback.format_exc()}")
                 return Response(bulk_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         except UnicodeDecodeError as e:
