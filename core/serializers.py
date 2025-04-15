@@ -3,11 +3,12 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.contrib.auth.models import Group
 from django.db import transaction
+from django.db.models import Max
 
 from .models import (
     Category, Major, Chapter, ExamGroup, Exercise, ExerciseStem, Question,
     ExerciseAnswer, ExerciseAnalysis, ExerciseType, Source, ExerciseFrom, Exam, School,
-    User, RolePermission, UserActionLog, Role, Source
+    User, RolePermission, UserActionLog, Role, Source, ExerciseImage
 )
 import traceback
 import logging
@@ -74,6 +75,10 @@ class SchoolSerializer(serializers.ModelSerializer):
         model = School
         fields = ['school_id', 'name']
 
+class ExerciseImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ExerciseImage
+        fields = ['image_link', 'source_type', 'is_deprecated', 'ocr_result']
 
 class ExamSerializer(serializers.ModelSerializer):
 
@@ -100,23 +105,70 @@ class ExerciseStemSerializer(serializers.ModelSerializer):
         model = ExerciseStem
         fields = ['stem_content']
 
+    
 class ExerciseFromSerializer(serializers.ModelSerializer):
     exam = serializers.PrimaryKeyRelatedField(queryset=Exam.objects.all(), required=False, allow_null=True)
     exam_write = ExamSerializer(write_only=True, required=False)
+    from_school = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
+    exam_time = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
+    exam_code = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
+    exam_full_name = serializers.CharField(write_only=True, required=False, allow_null=True, allow_blank=True)
 
     class Meta:
         model = ExerciseFrom
-        fields = ['exam', 'exam_write', 'is_official_exercise', 'exercise_number', 'material_name', 'section', 'page_number']
+        fields = [
+            'exam', 'exam_write', 'from_school', 'exam_time', 'exam_code', 'exam_full_name',
+            'is_official_exercise', 'exercise_number', 'material_name', 'section', 'page_number'
+        ]
+
+    # def validate(self, data):
+    #     logger.debug(f"Validating ExerciseFrom data: {data}")
+    #     has_exam_write = data.get('exam_write')
+    #     has_exam_fields = any(data.get(field) for field in ['from_school', 'exam_time', 'exam_code', 'exam_full_name', 'is_official_exercise', 'section', 'material_name', 'page_number'])
+    #     if not data.get('exam') and not has_exam_write and not has_exam_fields:
+    #         raise serializers.ValidationError("Must provide either exam, exam_write, or at least one of other fields.")
+    #     return data
 
     def create(self, validated_data):
-        logger.debug(f'watch exercise_from validated_data {validated_data}')
+        logger.debug(f"Creating ExerciseFrom with validated_data: {validated_data}")
         exam_data = validated_data.pop('exam_write', None)
-        if exam_data:
-            exam_serializer = ExamSerializer(data=exam_data)
-            exam_serializer.is_valid(raise_exception=True)
-            exam = exam_serializer.save()
+        exam = validated_data.pop('exam', None)
+        from_school = validated_data.pop('from_school', None)
+        exam_time = validated_data.pop('exam_time', None)
+        exam_code = validated_data.pop('exam_code', None)
+        exam_full_name = validated_data.pop('exam_full_name', None)
+        exercise = validated_data.pop('exercise', None)  # 获取 exercise
+
+        if not exam:
+            if exam_data:
+                exam_serializer = ExamSerializer(data=exam_data)
+                exam_serializer.is_valid(raise_exception=True)
+                exam = exam_serializer.save()
+            elif any([from_school, exam_time, exam_code, exam_full_name]):
+                exam_data = {
+                    'from_school': from_school,
+                    'exam_time': exam_time,
+                    'exam_code': exam_code,
+                    'exam_full_name': exam_full_name
+                }
+                exam_data = {k: v for k, v in exam_data.items() if v is not None}
+                if exam_data:
+                    if from_school:
+                        school, _ = School.objects.get_or_create(name=from_school)
+                        exam_data['school'] = school
+                    if exercise and exercise.category:
+                        exam_data['category'] = exercise.category
+                    exam, _ = Exam.objects.get_or_create(**exam_data)
+                else:
+                    exam = None
+
+        if exam:
             validated_data['exam'] = exam
-        return ExerciseFrom.objects.create(**validated_data)
+        if exercise:
+            validated_data['exercise'] = exercise
+        else:
+            logger.warning("No exercise provided for ExerciseFrom, may cause null exercise_id")
+        return ExerciseFrom(**validated_data)
     
 
 # 新增：题型和来源序列化器
@@ -130,12 +182,7 @@ class SourceSerializer(serializers.ModelSerializer):
         model = Source
         fields = ['source_id', 'source_name']
 
-class ExerciseFromSerializer(serializers.ModelSerializer):
-    exam = ExamSerializer(read_only=True)
 
-    class Meta:
-        model = ExerciseFrom
-        fields = ['exam', 'is_official_exercise', 'exercise_number', 'material_name', 'section', 'page_number']
 
 
 class ExerciseSerializer(serializers.ModelSerializer):
@@ -143,10 +190,7 @@ class ExerciseSerializer(serializers.ModelSerializer):
     questions = QuestionSerializer(many=True, read_only=True)
     answer = ExerciseAnswerSerializer(read_only=True)
     analysis = ExerciseAnalysisSerializer(read_only=True)
-    # exercise_from = ExerciseFromSerializer(read_only=True)
-    # 直接使用嵌套 Serializer，利用 prefetch_related 的结果
-    # answers = ExerciseAnswerSerializer(many=True, read_only=True)
-    # analyses = ExerciseAnalysisSerializer(many=True, read_only=True)
+
     
     from_school = serializers.CharField(source='exercise_from.exam.from_school', read_only=True, allow_null=True)
     exam_time = serializers.CharField(source='exercise_from.exam.exam_time', read_only=True, allow_null=True)
@@ -159,27 +203,7 @@ class ExerciseSerializer(serializers.ModelSerializer):
     source_name = serializers.CharField(source='source.source_name', read_only=True, allow_null=True)
     type_name = serializers.CharField(source='exercise_type.type_name', read_only=True, allow_null=True)
 
-    # 写入字段
-    # stem_write = ExerciseStemSerializer(source='stem', write_only=True, required=False, allow_null=True)
-    # questions_write = QuestionSerializer(many=True, source='questions', write_only=True, required=False)
-    # answer_write = ExerciseAnswerSerializer(many=True, source='answers', write_only=True, required=False)
-    # analysis_write = ExerciseAnalysisSerializer(many=True, source='analyses', write_only=True, required=False)
-    # exercise_from_write = ExerciseFromSerializer(source='exercise_from', write_only=True, required=False)
-    # exam_write = ExamSerializer( write_only=True, required=False)
-    # school_write = SchoolSerializer( write_only=True, required=False)
     
-
-    # class Meta:
-    #     model = Exercise
-    #     fields = [
-    #         'exercise_id', 
-    #         'source', 'level', 'score', 'stem', 'questions', 'answer', 'analysis',
-    #           'from_school', 'exam_time', 'exam_code',
-    #         'exam_full_name', 'category_name', 'major_name', 'chapter_name', 'examgroup_name',
-    #         'source_name', 'stem_write', 'questions_write', 'answer_write', 'analysis_write',
-    #         'exercise_from_write', 'exam_write', 'school_write'
-    #     ]
-    #     read_only_fields = ['exercise_id']
 
     class Meta:
         model = Exercise
@@ -215,207 +239,300 @@ class ExerciseSerializer(serializers.ModelSerializer):
         return data
 
 
-    # def create(self, validated_data):
-        
-    #     stem_data = validated_data.pop('stem_write', None)
-    #     questions_data = validated_data.pop('questions_write', [])
-    #     answers_data = validated_data.pop('answer_write', [])
-    #     analyses_data = validated_data.pop('analysis_write', [])
-    #     exercise_from_data = validated_data.pop('exercise_from_write', None)
-    #     logger.debug('In ExerciseSerializer create.....')
-
-    #     with transaction.atomic():
-    #         # 映射外键对象
-    #         validated_data['category'] = Category.objects.get(category_name=validated_data.pop('category'))
-    #         validated_data['major'] = Major.objects.get(major_name=validated_data.pop('major'))
-    #         validated_data['chapter'] = Chapter.objects.get(chapter_name=validated_data.pop('chapter'))
-    #         validated_data['exam_group'] = ExamGroup.objects.get(examgroup_name=validated_data.pop('exam_group'))
-    #         validated_data['source'] = Source.objects.get(source_name=validated_data.pop('source'))
-    #         validated_data['exercise_type'] = ExerciseType.objects.get(type_name=validated_data.pop('exercise_type'))
-
-    #         # 创建 Exercise 对象
-    #         validated_data.pop('exercise_id', None)
-    #         exercise = Exercise.objects.create(**validated_data)
-
-    #         # 处理 stem
-    #         if stem_data:
-    #             stem = ExerciseStem.objects.create(exercise=exercise, **stem_data)
-    #             exercise.stem = stem
-
-    #         # 处理 answers，取最后一个
-    #         if answers_data:
-    #             ExerciseAnswer.objects.bulk_create([
-    #                 ExerciseAnswer(exercise=exercise, **data) for data in answers_data
-    #             ])
-    #             exercise.answer = ExerciseAnswer.objects.filter(exercise=exercise).last()
-
-    #         # 处理 analyses，取最后一个
-    #         if analyses_data:
-    #             ExerciseAnalysis.objects.bulk_create([
-    #                 ExerciseAnalysis(exercise=exercise, **data) for data in analyses_data
-    #             ])
-    #             exercise.analysis = ExerciseAnalysis.objects.filter(exercise=exercise).last()
-
-    #         # 处理 exercise_from
-    #         if exercise_from_data:
-    #             exam_data = exercise_from_data.pop('exam_write', None)
-    #             if exam_data:
-    #                 school_data = exam_data.pop('school_write', None)
-    #                 if school_data:
-    #                     school, _ = School.objects.get_or_create(name=school_data['name'])
-    #                     exam_data['school'] = school
-    #                     if not exam_data.get('from_school'):
-    #                         exam_data['from_school'] = school.name
-    #                 exam_data['category'] = Category.objects.get(category_name=exam_data.pop('category'))
-    #                 exam, _ = Exam.objects.get_or_create(**exam_data)
-    #                 exercise_from_data['exam'] = exam
-    #             exercise_from = ExerciseFrom.objects.create(exercise=exercise, **exercise_from_data)
-    #             exercise.exercise_from = exercise_from
-
-                
-
-    #         # 处理 questions
-    #         if questions_data:
-    #             Question.objects.bulk_create([
-    #                 Question(exercise=exercise, **data) for data in questions_data
-    #             ])
-
-    #         exercise.save(update_fields=['stem', 'answer', 'analysis', 'exercise_from'])
-    #     return exercise
 
 
 
-# 主 Serializer
+
+
 class ExerciseWriteSerializer(serializers.ModelSerializer):
-    
-    stem_write = ExerciseStemSerializer(write_only=True, required=False, allow_null=True)
-    questions_write = QuestionSerializer(many=True, write_only=True, required=False, allow_null=True)
-    answer_write = ExerciseAnswerSerializer(many=True, write_only=True, required=False, allow_null=True)
-    analysis_write = ExerciseAnalysisSerializer(many=True, write_only=True, required=False, allow_null=True)
+    category = serializers.CharField()
+    major = serializers.CharField(allow_null=True)
+    chapter = serializers.CharField(allow_null=True)
+    examgroup = serializers.CharField(allow_null=True)
+    source = serializers.CharField(allow_null=True)
+    type = serializers.CharField()
+    stem = serializers.CharField(allow_null=True)
+    questions = QuestionSerializer(many=True, required=False)
+    answer = ExerciseAnswerSerializer(many=True, required=False)
+    analysis = ExerciseAnalysisSerializer(many=True, required=False)
+    exercise_from = ExerciseFromSerializer(required=False, allow_null=True)
+    image_links = ExerciseImageSerializer(many=True, required=False)
+    exercise_id = serializers.IntegerField(required=False, allow_null=True, write_only=True)
 
-    category_name = serializers.CharField(source='category.category_name', write_only=True, allow_null=True)
-    major_name = serializers.CharField(source='major.major_name', write_only=True, allow_null=True)
-    chapter_name = serializers.CharField(source='chapter.chapter_name', write_only=True, allow_null=True)
-    examgroup_name = serializers.CharField(source='examgroup.examgroup_name', write_only=True, allow_null=True)
-    
-    exercise_from_write = ExerciseFromSerializer(write_only=True, required=False, allow_null=True)
-    exam_write = ExamSerializer(write_only=True, required=False, allow_null=True)
-    school_write = SchoolSerializer(write_only=True, required=False, allow_null=True)
-
-    source_name = serializers.CharField(source='source.source_name', write_only=True, allow_null=True)
-    type_name = serializers.CharField(source='exercisetype.type_name', write_only=True, allow_null=True)
-    
     class Meta:
         model = Exercise
-        list_serializer_class = serializers.ListSerializer
         fields = [
-            'exercise_id', 'source_name', 'level', 'score', 'category_name', 'major_name', 'chapter_name', 'examgroup_name',
-            'type_name', 'stem_write', 'questions_write', 'answer_write', 'analysis_write',
-            'exercise_from_write', 'exam_write', 'school_write'
+            'exercise_id', 'category', 'major', 'chapter', 'examgroup', 'source', 'type',
+            'level', 'score', 'stem', 'questions', 'answer', 'analysis', 'exercise_from', 'image_links'
         ]
-        read_only_fields = ['exercise_id']
+
+    def to_internal_value(self, data):
+        # Log raw input data for debugging
+        # logger.debug(f"Raw input data: {data}")
+        return super().to_internal_value(data)
 
     def validate(self, data):
-        logger.debug(f'Before validate data: {data}')
+        # logger.debug(f'Validated data: {data}')
         errors = {}
-        required_fields = ['category', 'stem_write']
+
+        # Required fields
+        required_fields = ['category']
         for field in required_fields:
             if field not in data or not data[field]:
                 errors[field] = f"{field} is required and cannot be empty."
+
+        # Validate stem or questions presence
+        # if not data.get('stem') and not data.get('questions'):
+        #     errors['stem'] = "Either stem or questions must be provided."
+
+        # Validate exercise_id if provided
+        if 'exercise_id' in data and data['exercise_id'] is not None:
+            try:
+                Exercise.objects.get(exercise_id=data['exercise_id'])
+                logger.debug(f"Found exercise ID {data['exercise_id']} for update")
+            except Exercise.DoesNotExist:
+                logger.warning(f"Exercise ID {data['exercise_id']} not found, will create new exercise")
+                # Optional: Raise error instead
+                # errors['exercise_id'] = f"Exercise ID {data['exercise_id']} does not exist"
+
         if errors:
             raise serializers.ValidationError(errors)
-        logger.debug(f'Validate result: {data}')
         return data
 
     def create(self, validated_data):
-        # 统一按批量逻辑处理
         data_list = validated_data if isinstance(validated_data, list) else [validated_data]
         logger.debug(f"Calling create with {len(data_list)} items")
 
         with transaction.atomic():
             # 预加载外键对象
-            categories = {c.category_name: c for c in Category.objects.all()}
-            majors = {m.major_name: m for m in Major.objects.all()}
-            chapters = {c.chapter_name: c for c in Chapter.objects.all()}
-            exam_groups = {e.examgroup_name: e for e in ExamGroup.objects.all()}
-            sources = {s.source_name: s for s in Source.objects.all()}
-            exercise_types = {t.type_name: t for t in ExerciseType.objects.all()}
-            schools = {s.name: s for s in School.objects.all()}
+            # categories = {c.category_name: c for c in Category.objects.all()}
+            # majors = {m.major_name: m for m in Major.objects.all()}
+            # chapters = {c.chapter_name: c for c in Chapter.objects.all()}
+            # exam_groups = {e.examgroup_name: e for e in ExamGroup.objects.all()}
+            # sources = {s.source_name: s for s in Source.objects.all()}
+            # exercise_types = {t.type_name: t for t in ExerciseType.objects.all()}
+            # schools = {s.name: s for s in School.objects.all()}
 
-            # 第一步：创建并保存 Exercise 对象
-            exercises_to_create = []
+            # 分离更新和创建
+            updates = []
+            creations = []
+            exercise_id_to_data = {}
             for data in data_list:
-                exercise_data = {
-                    'category': categories.get(data.pop('category')),
-                    'major': majors.get(data.pop('major')),
-                    'chapter': chapters.get(data.pop('chapter')),
-                    'exam_group': exam_groups.get(data.pop('exam_group')),
-                    'source': sources.get(data.pop('source_write')),
-                    'exercise_type': exercise_types.get(data.pop('exercise_type')),
-                    'level': data.pop('level', None),
-                    'score': data.pop('score', None),
-                }
-                exercises_to_create.append(Exercise(**exercise_data))
+                exercise_id = data.pop('exercise_id', None)
+                exercise_id_to_data[exercise_id] = data
+                if exercise_id is not None:
+                    try:
+                        exercise = Exercise.objects.get(exercise_id=exercise_id)
+                        updates.append((exercise, data))
+                    except Exercise.DoesNotExist:
+                        creations.append((exercise_id, data))
+                else:
+                    creations.append((None, data))
 
-            Exercise.objects.bulk_create(exercises_to_create, batch_size=100)
-            logger.debug(f"Created {len(exercises_to_create)} exercises")
+            # 处理创建
+            exercises_to_create = []
+            created_exercise_ids = []
+            for exercise_id, data in creations:
+                try:
+                    category_name = data.pop('category')
+                    category, _ = Category.objects.get_or_create(category_name=category_name)
+                    major_name = data.pop('major', None)
+                    major = None
+                    if major_name:
+                        major, _ = Major.objects.get_or_create(major_name=major_name, category=category)
+                    chapter_name = data.pop('chapter', None)
+                    chapter = None
+                    if chapter_name and major:
+                        chapter, _ = Chapter.objects.get_or_create(chapter_name=chapter_name, major=major)
+                    examgroup_name = data.pop('examgroup', None)
+                    exam_group = None
+                    if examgroup_name and chapter:
+                        exam_group, _ = ExamGroup.objects.get_or_create(examgroup_name=examgroup_name, chapter=chapter)
+                    source_name = data.pop('source', None)
+                    source = None
+                    if source_name:
+                        source, _ = Source.objects.get_or_create(source_name=source_name)
+                    type_name = data.pop('type')
+                    exercise_type, _ = ExerciseType.objects.get_or_create(type_name=type_name)
 
-            # 刷新 Exercise 对象
-            exercise_ids = [e.exercise_id for e in exercises_to_create if e.exercise_id is not None]
-            refreshed_exercises = list(Exercise.objects.filter(exercise_id__in=exercise_ids).order_by('exercise_id'))
-            if len(refreshed_exercises) != len(exercises_to_create):
-                logger.warning(f"Exercise count mismatch: created {len(exercises_to_create)}, refreshed {len(refreshed_exercises)}")
-                refreshed_exercises = Exercise.objects.order_by('-exercise_id')[:len(exercises_to_create)]
+                    exercise_data = {
+                        'exercise_id': exercise_id,
+                        'category': category,
+                        'major': major,
+                        'chapter': chapter,
+                        'exam_group': exam_group,
+                        'source': source,
+                        'exercise_type': exercise_type,
+                        'level': data.pop('level', None),
+                        'score': data.pop('score', None),
+                    }
+                    if exercise_id is None:
+                        max_id = Exercise.objects.aggregate(Max('exercise_id'))['exercise_id__max'] or 0
+                        exercise_data['exercise_id'] = max_id + 1
+                    exercises_to_create.append(Exercise(**exercise_data))
+                    created_exercise_ids.append(exercise_data['exercise_id'])
+                except Exception as e:
+                    logger.error(f"Failed to process creation for exercise_id={exercise_id}: {str(e)}")
+                    continue
 
-            # 第二步：创建关联对象
+            # 初始化 created_exercises
+            created_exercises = []
+            if exercises_to_create:
+                try:
+                    Exercise.objects.bulk_create(exercises_to_create, batch_size=100)
+                    logger.debug(f"Created {len(exercises_to_create)} new exercises")
+                    created_exercises = list(Exercise.objects.filter(exercise_id__in=created_exercise_ids))
+                except Exception as e:
+                    logger.error(f"Bulk create exercises failed: {str(e)}")
+                    raise
+
+            # 处理更新
+            updated_exercises = []
+            for exercise, data in updates:
+                try:
+                    logger.debug(f"Updating exercise ID {exercise.exercise_id}")
+                    category_name = data.pop('category')
+                    category, _ = Category.objects.get_or_create(category_name=category_name)
+                    major_name = data.pop('major', None)
+                    major = None
+                    if major_name:
+                        major, _ = Major.objects.get_or_create(major_name=major_name, category=category)
+                    chapter_name = data.pop('chapter', None)
+                    chapter = None
+                    if chapter_name and major:
+                        chapter, _ = Chapter.objects.get_or_create(chapter_name=chapter_name, major=major)
+                    examgroup_name = data.pop('examgroup', None)
+                    exam_group = None
+                    if examgroup_name and chapter:
+                        exam_group, _ = ExamGroup.objects.get_or_create(examgroup_name=examgroup_name, chapter=chapter)
+                    source_name = data.pop('source', None)
+                    source = None
+                    if source_name:
+                        source, _ = Source.objects.get_or_create(source_name=source_name)
+                    type_name = data.pop('type')
+                    exercise_type, _ = ExerciseType.objects.get_or_create(type_name=type_name)
+
+                    exercise.category = category
+                    exercise.major = major
+                    exercise.chapter = chapter
+                    exercise.exam_group = exam_group
+                    exercise.source = source
+                    exercise.exercise_type = exercise_type
+                    exercise.level = data.pop('level', None)
+                    exercise.score = data.pop('score', None)
+                    exercise.save()
+
+                    ExerciseStem.objects.filter(exercise=exercise).delete()
+                    Question.objects.filter(exercise=exercise).delete()
+                    ExerciseAnswer.objects.filter(exercise=exercise).delete()
+                    ExerciseAnalysis.objects.filter(exercise=exercise).delete()
+                    ExerciseFrom.objects.filter(exercise=exercise).delete()
+                    ExerciseImage.objects.filter(exercise=exercise).delete()
+
+                    updated_exercises.append(exercise)
+                except Exception as e:
+                    logger.error(f"Failed to update exercise_id={exercise.exercise_id}: {str(e)}")
+                    continue
+
+            all_exercises = created_exercises + updated_exercises
+            all_data = [exercise_id_to_data.get(ex.exercise_id, {}) for ex in all_exercises]
+
+            if not all_exercises:
+                logger.warning("No exercises created or updated, returning empty list")
+                return []
+
             stems_to_create = []
             questions_to_create = []
             answers_to_create = []
             analyses_to_create = []
             exercise_froms_to_create = []
+            images_to_create = []
 
-            for exercise, data in zip(refreshed_exercises, data_list):
-                stem_data = data.pop('stem_write', None)
-                questions_data = data.pop('questions_write', [])
-                answers_data = data.pop('answer_write', [])
-                analyses_data = data.pop('analysis_write', [])
-                exercise_from_data = data.pop('exercise_from_write', None)
-                exam_data = data.pop('exam_write', None)
-                school_data = data.pop('school_write', None)
+            for exercise, data in zip(all_exercises, all_data):
+                logger.debug(f"Processing related objects for exercise_id={exercise.exercise_id}")
+                stem_content = data.pop('stem', None)
+                questions_data = data.pop('questions', [])
+                answers_data = data.pop('answer', [])
+                analyses_data = data.pop('analysis', [])
+                exercise_from_data = data.pop('exercise_from', None)
+                image_links_data = data.pop('image_links', [])
 
-                if stem_data:
-                    stems_to_create.append(ExerciseStem(exercise=exercise, **stem_data))
+                if stem_content:
+                    stems_to_create.append(ExerciseStem(exercise=exercise, stem_content=stem_content))
+
                 if questions_data:
-                    questions_to_create.extend([Question(exercise=exercise, **q) for q in questions_data])
+                    question_serializer = QuestionSerializer(data=questions_data, many=True)
+                    if question_serializer.is_valid():
+                        validated_questions = question_serializer.validated_data
+                        seen_orders = set()
+                        for q in validated_questions:
+                            q_order = q.get('question_order')
+                            if q_order is not None:
+                                if q_order in seen_orders:
+                                    logger.warning(
+                                        f"Duplicate question_order {q_order} for exercise_id={exercise.exercise_id}"
+                                    )
+                                    continue
+                                seen_orders.add(q_order)
+                            questions_to_create.append(
+                                Question(
+                                    exercise=exercise,
+                                    question_order=q.get('question_order'),
+                                    question_stem=q.get('question_stem', ''),
+                                    question_answer=q.get('question_answer', ''),
+                                    question_analysis=q.get('question_analysis')
+                                )
+                            )
+                    else:
+                        logger.error(f"Question validation errors for exercise_id={exercise.exercise_id}: {question_serializer.errors}")
+
                 if answers_data:
                     answers_to_create.extend([ExerciseAnswer(exercise=exercise, **a) for a in answers_data])
                 if analyses_data:
                     analyses_to_create.extend([ExerciseAnalysis(exercise=exercise, **a) for a in analyses_data])
-                
+
                 if exercise_from_data:
-                    if exam_data:
-                        if school_data:
-                            school, _ = School.objects.get_or_create(name=school_data['name'])
-                            exam_data['school'] = school
-                            if not exam_data.get('from_school'):
-                                exam_data['from_school'] = school.name
-                        exam_data['category'] = exercise.category
-                        exam, _ = Exam.objects.get_or_create(**exam_data)
-                        exercise_from_data['exam'] = exam
-                    exercise_froms_to_create.append(ExerciseFrom(exercise=exercise, **exercise_from_data))
+                    logger.debug(f"ExerciseFrom data for exercise_id={exercise.exercise_id}: {exercise_from_data}")
+                    exercise_from_serializer = ExerciseFromSerializer(data=exercise_from_data)
+                    if exercise_from_serializer.is_valid():
+                        validated_from_data = exercise_from_serializer.validated_data
+                        validated_from_data['exercise'] = exercise
+                        exercise_from = exercise_from_serializer.create(validated_from_data)
+                        if not exercise_from.exercise:
+                            logger.error(f"ExerciseFrom missing exercise for exercise_id={exercise.exercise_id}")
+                            exercise_from.exercise = exercise
+                        exercise_froms_to_create.append(exercise_from)
+                        logger.info(f"Created ExerciseFrom for exercise_id={exercise.exercise_id}, exam_id={exercise_from.exam.exam_id if exercise_from.exam else 'None'}")
+                    else:
+                        logger.error(f"ExerciseFrom validation errors for exercise_id={exercise.exercise_id}: {exercise_from_serializer.errors}")
 
-            ExerciseStem.objects.bulk_create(stems_to_create, batch_size=100)
-            Question.objects.bulk_create(questions_to_create, batch_size=100)
-            ExerciseAnswer.objects.bulk_create(answers_to_create, batch_size=100)
-            ExerciseAnalysis.objects.bulk_create(analyses_to_create, batch_size=100)
-            ExerciseFrom.objects.bulk_create(exercise_froms_to_create, batch_size=100)
+                if image_links_data:
+                    images_to_create.extend([ExerciseImage(exercise=exercise, **img) for img in image_links_data])
 
-            # 第三步：更新外键关系
-            for exercise in refreshed_exercises:
-                stem = ExerciseStem.objects.filter(exercise_id=exercise.exercise_id).first()
-                answer = ExerciseAnswer.objects.filter(exercise_id=exercise.exercise_id).last()
-                analysis = ExerciseAnalysis.objects.filter(exercise_id=exercise.exercise_id).last()
-                exercise_from = ExerciseFrom.objects.filter(exercise_id=exercise.exercise_id).first()
+            if stems_to_create:
+                ExerciseStem.objects.bulk_create(stems_to_create, batch_size=100)
+            if questions_to_create:
+                logger.info(f"Creating {len(questions_to_create)} questions")
+                Question.objects.bulk_create(questions_to_create, batch_size=100)
+            if answers_to_create:
+                ExerciseAnswer.objects.bulk_create(answers_to_create, batch_size=100)
+            if analyses_to_create:
+                ExerciseAnalysis.objects.bulk_create(analyses_to_create, batch_size=100)
+            if exercise_froms_to_create:
+                logger.info(f"Creating {len(exercise_froms_to_create)} exercise_froms")
+                try:
+                    ExerciseFrom.objects.bulk_create(exercise_froms_to_create, batch_size=100)
+                except Exception as e:
+                    logger.error(f"Bulk create ExerciseFrom failed: {str(e)}")
+                    raise
+            if images_to_create:
+                ExerciseImage.objects.bulk_create(images_to_create, batch_size=100)
+
+            for exercise in all_exercises:
+                stem = ExerciseStem.objects.filter(exercise=exercise).first()
+                answer = ExerciseAnswer.objects.filter(exercise=exercise).last()
+                analysis = ExerciseAnalysis.objects.filter(exercise=exercise).last()
+                exercise_from = ExerciseFrom.objects.filter(exercise=exercise).first()
 
                 exercise.stem = stem
                 exercise.answer = answer
@@ -424,273 +541,19 @@ class ExerciseWriteSerializer(serializers.ModelSerializer):
                 exercise.save(update_fields=['stem', 'answer', 'analysis', 'exercise_from'])
                 exercise.refresh_from_db()
 
-            return refreshed_exercises if len(refreshed_exercises) > 1 else refreshed_exercises[0]
-
-    def update(self, instance, validated_data):
-        data_list = validated_data if isinstance(validated_data, list) else [validated_data]
-        logger.debug(f"Calling update with {len(data_list)} items")
-
-        with transaction.atomic():
-            categories = {c.category_name: c for c in Category.objects.all()}
-            majors = {m.major_name: m for m in Major.objects.all()}
-            chapters = {c.chapter_name: c for c in Chapter.objects.all()}
-            exam_groups = {e.examgroup_name: e for e in ExamGroup.objects.all()}
-            sources = {s.source_name: s for s in Source.objects.all()}
-            exercise_types = {t.type_name: t for t in ExerciseType.objects.all()}
-            schools = {s.name: s for s in School.objects.all()}
-
-            updated_exercises = []
-            for data in data_list:
-                exercise_id = data.get('exercise_id')
-                if not exercise_id:
-                    raise serializers.ValidationError("exercise_id is required for update")
-                try:
-                    exercise = Exercise.objects.get(exercise_id=exercise_id)
-                except Exercise.DoesNotExist:
-                    logger.error(f"Exercise with ID {exercise_id} not found")
-                    continue
-
-                # 更新 Exercise 基础字段
-                if 'category' in data:
-                    exercise.category = categories.get(data.pop('category'))
-                if 'major' in data:
-                    exercise.major = majors.get(data.pop('major'))
-                if 'chapter' in data:
-                    exercise.chapter = chapters.get(data.pop('chapter'))
-                if 'exam_group' in data:
-                    exercise.exam_group = exam_groups.get(data.pop('exam_group'))
-                if 'source' in data:
-                    exercise.source = sources.get(data.pop('source'))
-                if 'exercise_type' in data:
-                    exercise.exercise_type = exercise_types.get(data.pop('exercise_type'))
-                for attr in ['level', 'score']:
-                    if attr in data:
-                        setattr(exercise, attr, data.pop(attr))
-                exercise.save()
-
-                # 更新关联对象（不删除，仅更新字段）
-                stem_data = data.pop('stem_write', None)
-                questions_data = data.pop('questions_write', [])
-                answer_data = data.pop('answer_write', [])
-                analysis_data = data.pop('analysis_write', [])
-                exercise_from_data = data.pop('exercise_from_write', None)
-                exam_data = data.pop('exam_write', None)
-                school_data = data.pop('school_write', None)
-
-                # Stem: 更新字段
-                if stem_data and exercise.stem:
-                    for key, value in stem_data.items():
-                        setattr(exercise.stem, key, value)
-                    exercise.stem.save()
-
-                # Questions: 更新字段（按 question_order 匹配）
-                if questions_data:
-                    existing_questions = {q.question_order: q for q in exercise.questions.all()}
-                    for q_data in questions_data:
-                        q_order = q_data.get('question_order')
-                        if q_order in existing_questions:
-                            question = existing_questions[q_order]
-                            for key, value in q_data.items():
-                                setattr(question, key, value)
-                            question.save()
-
-                # Answer: 更新字段
-                if answer_data:
-                    answer_id = answer_data.pop('answer_id', None)
-                    if answer_id:
-                        try:
-                            answer = ExerciseAnswer.objects.get(id=answer_id, exercise=exercise)
-                            for k, v in answer_data.items():
-                                setattr(answer, k, v)
-                            answer.save()
-                        except ExerciseAnswer.DoesNotExist:
-                            logger.warning(f"Answer with ID {answer_id} not found for exercise {exercise_id}")
-                    
-
-                # Analysis: 更新字段
-                if analysis_data:
-                    analysis_id = analysis_data.pop('analysis_id', None)
-                    if analysis_id:
-                        try:
-                            analysis = ExerciseAnalysis.objects.get(id=analysis_id, exercise=exercise)
-                            for k, v in analysis_data.items():
-                                setattr(analysis, k, v)
-                            analysis.save()
-                        except ExerciseAnalysis.DoesNotExist:
-                            logger.warning(f"Analysis with ID {analysis_id} not found for exercise {exercise_id}")
-
-                # Exam 和 School: 根据特定字段获取并更新
-                if exam_data:
-                    exam_key = {
-                        'exam_code': exam_data.get('exam_code'),
-                        'exam_time': exam_data.get('exam_time'),
-                        'exam_full_name': exam_data.get('exam_full_name')
-                    }
-                    try:
-                        exam = Exam.objects.get(**exam_key)
-                    except Exam.DoesNotExist:
-                        exam = Exam(**exam_key)
-                    if school_data:
-                        school, _ = School.objects.get_or_create(name=school_data['name'])
-                        exam.school = school
-                        if not exam_data.get('from_school'):
-                            exam.from_school = school.name
-                    for key, value in exam_data.items():
-                        if key not in ['exam_code', 'exam_time', 'exam_full_name']:
-                            setattr(exam, key, value)
-                    exam.category = exercise.category
-                    exam.save()
-
-                    if exercise.exercise_from:
-                        exercise.exercise_from.exam = exam
-                        exercise.exercise_from.save()
-
-                # ExerciseFrom: 更新字段
-                if exercise_from_data and exercise.exercise_from:
-                    for key, value in exercise_from_data.items():
-                        setattr(exercise.exercise_from, key, value)
-                    exercise.exercise_from.save()
-
-                exercise.refresh_from_db()
-                updated_exercises.append(exercise)
-
-            return updated_exercises if len(updated_exercises) > 1 else updated_exercises[0]
-
-
+            logger.info(f"Processed {len(all_exercises)} exercises: {len(created_exercises)} created, {len(updated_exercises)} updated")
+            return all_exercises
 
 class BulkExerciseSerializer(serializers.ListSerializer):
     child = ExerciseWriteSerializer()
 
     def create(self, validated_data_list):
         logger.debug(f"Calling BulkExerciseSerializer.create with {len(validated_data_list)} items")
-        with transaction.atomic():
+        return self.child.create(validated_data_list)
 
-            logger.debug(f"validated_data_list: {validated_data_list}")
 
-            # 第一步：创建并保存 Exercise 对象
-            exercises_to_create = []
-            for data in validated_data_list:
-                logger.debug(f"data: {data}")
-                category, _ = Category.objects.get_or_create(category_name=data.pop('category')['category_name'])
-                major, _ = Major.objects.get_or_create(major_name=data.pop('major')['major_name'], category=category)
-                chapter, _ = Chapter.objects.get_or_create(chapter_name=data.pop('chapter')['chapter_name'], major=major)
-                exam_group, _ = ExamGroup.objects.get_or_create(examgroup_name=data.pop('examgroup')['examgroup_name'], chapter=chapter)
-                source, _ = Source.objects.get_or_create(source_name=data.pop('source')['source_name'])
-                exercise_type, _ = ExerciseType.objects.get_or_create(type_name=data.pop('exercisetype')['type_name'])
-                validated_data = {
-                    'category': category,
-                    'major': major,
-                    'chapter': chapter,
-                    'exam_group': exam_group,
-                    'source': source,
-                    'exercise_type': exercise_type,
-                    'level': data.pop('level', None),
-                    'score': data.pop('score', None),
-                }
-                exercises_to_create.append(Exercise(**validated_data))
 
-            # 批量保存 Exercise 对象
-            Exercise.objects.bulk_create(exercises_to_create, batch_size=100)
-            logger.debug(f"Created {len(exercises_to_create)} exercises")
 
-            # 刷新 Exercise 对象，从数据库重新查询
-            exercise_ids = [e.exercise_id for e in exercises_to_create if e.exercise_id is not None]
-            refreshed_exercises = list(Exercise.objects.filter(exercise_id__in=exercise_ids).order_by('exercise_id'))
-            if len(refreshed_exercises) != len(exercises_to_create):
-                logger.warning(f"Exercise count mismatch: created {len(exercises_to_create)}, refreshed {len(refreshed_exercises)}")
-                refreshed_exercises = Exercise.objects.order_by('-exercise_id')[:len(exercises_to_create)]
-
-            logger.debug(f"Refreshed exercises: {[e.exercise_id for e in refreshed_exercises]}")
-
-            # 第二步：基于刷新后的 Exercise 创建关联对象
-            stems_to_create = []
-            questions_to_create = []
-            answers_to_create = []
-            analyses_to_create = []
-            exercise_froms_to_create = []
-
-            for exercise, data in zip(refreshed_exercises, validated_data_list):
-                stem_data = data.pop('stem_write', None)
-                logger.debug(f"stem_data: {stem_data}")
-                questions_data = data.pop('questions_write', [])
-                logger.debug(f"questions_data: {questions_data}")
-                answers_data = data.pop('answer_write', [])
-                logger.debug(f"answers_data: {answers_data}")
-                analyses_data = data.pop('analysis_write', [])
-                logger.debug(f"analyses_data: {analyses_data}")
-                exercise_from_data = data.pop('exercise_from_write', None)
-                logger.debug(f"exercise_from_data: {exercise_from_data}")
-                exam_data = data.pop('exam_write', None)
-                logger.debug(f"exam_data: {exam_data}")
-                school_data = data.pop('school_write', None)
-                logger.debug(f"school_data: {school_data}")
-
-                if stem_data:
-                    stems_to_create.append(ExerciseStem(exercise=exercise, **stem_data))
-                if questions_data:
-                    questions_to_create.extend([Question(exercise=exercise, **q) for q in questions_data])
-                if answers_data:
-                    answers_to_create.extend([ExerciseAnswer(exercise=exercise, **a) for a in answers_data])
-                if analyses_data:
-                    analyses_to_create.extend([ExerciseAnalysis(exercise=exercise, **a) for a in analyses_data])
-                if exercise_from_data:
-                    if exam_data:
-                        if school_data:
-                            school, _ = School.objects.get_or_create(name=school_data['name'])
-                            exam_data['school'] = school
-                            if not exam_data.get('from_school'):
-                                exam_data['from_school'] = school.name
-                        exam_data['category'] = exercise.category
-                        logger.debug(f'watch exam data {exam_data}')
-                        exam, _ = Exam.objects.get_or_create(**exam_data)
-                        exercise_from_data['exam'] = exam
-                    exercise_froms_to_create.append(ExerciseFrom(exercise=exercise, **exercise_from_data))
-
-            logger.debug(f"stems_to_create={stems_to_create}\n"
-                         f"questions_to_create={questions_to_create}\n"
-                         f"answers_to_create={answers_to_create}\n"
-                         f"analyses_to_create={analyses_to_create}\n"
-                         f"exercise_froms_to_create={exercise_froms_to_create}")
-
-            # 批量创建关联对象
-            ExerciseStem.objects.bulk_create(stems_to_create, batch_size=100)
-            logger.debug(f"Created {len(stems_to_create)} stems")
-            Question.objects.bulk_create(questions_to_create, batch_size=100)
-            logger.debug(f"Created {len(questions_to_create)} questions")
-            ExerciseAnswer.objects.bulk_create(answers_to_create, batch_size=100)
-            logger.debug(f"Created {len(answers_to_create)} answers")
-            ExerciseAnalysis.objects.bulk_create(analyses_to_create, batch_size=100)
-            logger.debug(f"Created {len(analyses_to_create)} analyses")
-            ExerciseFrom.objects.bulk_create(exercise_froms_to_create, batch_size=100)
-            logger.debug(f"Created {len(exercise_froms_to_create)} exercise_froms")
-
-            # 更新外键关系
-            for exercise in refreshed_exercises:
-                stem = ExerciseStem.objects.filter(exercise_id=exercise.exercise_id).first()
-                answer = ExerciseAnswer.objects.filter(exercise_id=exercise.exercise_id).last()
-                analysis = ExerciseAnalysis.objects.filter(exercise_id=exercise.exercise_id).last()
-                exercise_from = ExerciseFrom.objects.filter(exercise_id=exercise.exercise_id).first()
-
-                logger.debug(f"Exercise {exercise.exercise_id}: "
-                            f"stem={stem.stem_id if stem else None}, "
-                            f"answer={answer.answer_id if answer else None}, "
-                            f"analysis={analysis.analysis_id if analysis else None}, "
-                            f"exercise_from={exercise_from.exercise if exercise_from else None}")
-
-                exercise.stem = stem
-                exercise.answer = answer
-                exercise.analysis = analysis
-                exercise.exercise_from = exercise_from
-                exercise.save(update_fields=['stem', 'answer', 'analysis', 'exercise_from'])
-
-                exercise.refresh_from_db()
-                logger.debug(f"After save - Exercise {exercise.exercise_id}: "
-                            f"stem_id={exercise.stem_id}, "
-                            f"answer_id={exercise.answer_id}, "
-                            f"analysis_id={exercise.analysis_id}, "
-                            f"exercise_from_id={exercise.exercise_from_id}")
-
-            return refreshed_exercises
 
 
 
@@ -795,7 +658,8 @@ class RolePermissionSerializer(serializers.ModelSerializer):
 # 用户操作日志序列化器（不变）
 class UserActionLogSerializer(serializers.ModelSerializer):
     user = serializers.SlugRelatedField(slug_field='username', read_only=True)
+    user_id = serializers.IntegerField(source='user.id', read_only=True, allow_null=True)
 
     class Meta:
         model = UserActionLog
-        fields = ['id', 'user', 'action_type', 'model_name', 'object_id', 'details', 'timestamp', 'ip_address']
+        fields = ['id', 'user', 'user_id', 'action_type', 'model_name', 'object_id', 'details', 'timestamp', 'ip_address']

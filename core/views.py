@@ -1,16 +1,20 @@
 # core/views.py
 from rest_framework.views import APIView
+from rest_framework import generics
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
+from rest_framework.exceptions import ValidationError
 from django.db.models.fields import IntegerField  
 from django.db.models import Q, Func
 from django.db import models, transaction 
 from django.core.files.uploadedfile import UploadedFile
 from django.http import JsonResponse, FileResponse, StreamingHttpResponse
+
 import json
 import os
 import traceback
+from datetime import datetime
 from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import login, logout
@@ -47,7 +51,7 @@ def log_user_action(request, action_type, model_name=None, object_id=None, detai
         action_type=action_type,
         model_name=model_name,
         object_id=object_id,
-        details=json.dumps(details) if details else None,
+        details=json.dumps(details, ensure_ascii=False) if details else None,
         ip_address=ip_address
     )
 
@@ -137,7 +141,6 @@ class ExamGroupListByChapter(APIView):
 
 
 
-# 4. 根据 category/major/chapter/examgroup 获取 exercise 列表（包含 questions），支持搜索
 # 复用并扩展 ExerciseList，支持所有筛选条件
 class ExerciseList(APIView):
     pagination_class = StandardPagination
@@ -300,7 +303,8 @@ class ExerciseList(APIView):
 
             exercise.save()
             serializer = ExerciseSerializer(exercise)
-            # log_user_action(request, 'update', 'Exercise', exercise_id, request.data)
+            details = request.data.get('details', [])
+            log_user_action(request, 'update', 'Exercise', exercise_id, details=request.data)
             return Response(serializer.data, status=status.HTTP_200_OK)
 
         except Exercise.DoesNotExist:
@@ -335,6 +339,7 @@ class ExerciseList(APIView):
             with transaction.atomic():
                 exercise.delete()
                 logger.info(f"Exercise {exercise_id} deleted by user {request.user.username}")
+            log_user_action(request=request, action_type='delete', model_name='Exercise', object_id=exercise_id)
             return Response({"message": f"成功删除练习题 {exercise_id}"}, status=status.HTTP_200_OK)
         except Exercise.DoesNotExist:
             return Response({"error": "练习题不存在"}, status=status.HTTP_404_NOT_FOUND)
@@ -454,6 +459,7 @@ class SchoolList(APIView):
         serializer = SchoolSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
+            log_user_action(request, 'create', 'School', details=request.data)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -478,6 +484,7 @@ class SchoolDetail(APIView):
         serializer = SchoolSerializer(school, data=request.data)
         if serializer.is_valid():
             serializer.save()
+            log_user_action(request, 'update', 'School', pk)
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -486,6 +493,7 @@ class SchoolDetail(APIView):
         """删除学校"""
         school = self.get_object(pk)
         school.delete()
+        log_user_action(request, 'delete', 'School', pk)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 class ExamList(APIView):
@@ -528,6 +536,7 @@ class ExamList(APIView):
         serializer = ExamSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
+            log_user_action(request, 'create', 'Exam', details=request.data)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -552,6 +561,7 @@ class ExamDetail(APIView):
         serializer = ExamSerializer(exam, data=request.data)
         if serializer.is_valid():
             serializer.save()
+            log_user_action(request, 'update', 'Exam', pk, request.data)
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -560,6 +570,7 @@ class ExamDetail(APIView):
         """删除试卷"""
         exam = self.get_object(pk)
         exam.delete()
+        log_user_action(request, 'delete', 'Exam', pk)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 class ExamSchoolListByCategoryId(APIView):
@@ -632,6 +643,7 @@ class CategoryCreate(APIView):
         serializer = CategorySerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
+            log_user_action(request, 'create', 'Category', details=request.data)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -651,6 +663,7 @@ class CategoryDetail(APIView):
             serializer = CategorySerializer(category, data=request.data, partial=True)
             if serializer.is_valid():
                 serializer.save()
+                log_user_action(request, 'update', 'category', category_id, request.data)
                 return Response(serializer.data)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except Category.DoesNotExist:
@@ -661,6 +674,7 @@ class CategoryDetail(APIView):
         try:
             category = Category.objects.get(category_id=category_id)
             category.delete()
+            log_user_action(request, 'delete', 'Category', category_id)
             return Response(status=status.HTTP_204_NO_CONTENT)
         except Category.DoesNotExist:
             return Response({"error": "Category not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -672,6 +686,7 @@ class MajorCreate(APIView):
         serializer = MajorSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
+            log_user_action(request, 'create', 'Major', details=request.data)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -691,6 +706,7 @@ class MajorDetail(APIView):
             serializer = MajorSerializer(major, data=request.data, partial=True)
             if serializer.is_valid():
                 serializer.save()
+                log_user_action(request, 'update', 'Major', major_id, details=request.data)
                 return Response(serializer.data)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except Major.DoesNotExist:
@@ -701,6 +717,7 @@ class MajorDetail(APIView):
         try:
             major = Major.objects.get(major_id=major_id)
             major.delete()
+            log_user_action(request, 'delete', 'Major', major_id)
             return Response(status=status.HTTP_204_NO_CONTENT)
         except Major.DoesNotExist:
             return Response({"error": "Major not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -712,6 +729,7 @@ class ChapterCreate(APIView):
         serializer = ChapterSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
+            log_user_action(request, 'create', 'Chapter')
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -731,6 +749,7 @@ class ChapterDetail(APIView):
             serializer = ChapterSerializer(chapter, data=request.data, partial=True)
             if serializer.is_valid():
                 serializer.save()
+                log_user_action(request, 'update', 'Chapter', chapter_id, details=request.data)
                 return Response(serializer.data)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except Chapter.DoesNotExist:
@@ -741,6 +760,7 @@ class ChapterDetail(APIView):
         try:
             chapter = Chapter.objects.get(chapter_id=chapter_id)
             chapter.delete()
+            log_user_action(request, 'delete', 'Chapter', chapter_id)
             return Response(status=status.HTTP_204_NO_CONTENT)
         except Chapter.DoesNotExist:
             return Response({"error": "Chapter not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -752,6 +772,7 @@ class ExamGroupCreate(APIView):
         serializer = ExamGroupSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
+            log_user_action(request, 'create', 'ExamGroup')
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -771,6 +792,7 @@ class ExamGroupDetail(APIView):
             serializer = ExamGroupSerializer(examgroup, data=request.data, partial=True)
             if serializer.is_valid():
                 serializer.save()
+                log_user_action(request, 'update', 'ExamGroup', examgroup_id, details=request.data)
                 return Response(serializer.data)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except ExamGroup.DoesNotExist:
@@ -781,6 +803,7 @@ class ExamGroupDetail(APIView):
         try:
             examgroup = ExamGroup.objects.get(examgroup_id=examgroup_id)
             examgroup.delete()
+            log_user_action(request, 'delete', 'ExmaGroup', examgroup_id)
             return Response(status=status.HTTP_204_NO_CONTENT)
         except ExamGroup.DoesNotExist:
             return Response({"error": "ExamGroup not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -853,6 +876,7 @@ class UserListView(APIView):
                 group, _ = Group.objects.get_or_create(name=request.data['role'])
                 user.groups.clear()
                 user.groups.add(group)
+            log_user_action(request, 'create', 'Role', details=request.data)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -872,6 +896,7 @@ class UserDetailView(APIView):
                     role = Role.objects.get(id=request.data['role'])
                     user.role = role
                     user.save()  # 触发 save 方法，同步更新 groups
+                log_user_action(request, 'update', 'User', pk, request.data)
                 return Response(serializer.data)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except User.DoesNotExist:
@@ -900,6 +925,7 @@ class RoleListView(APIView):
         if serializer.is_valid():
             role = serializer.save()
             # 同步创建 Group（由 Role 的 save 方法自动处理）
+            log_user_action(request, 'create', 'Role', details=request.data)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -921,6 +947,7 @@ class RoleDetailView(APIView):
             serializer = RoleSerializer(role, data=request.data, partial=True)
             if serializer.is_valid():
                 serializer.save()
+                log_user_action(request, 'update', 'Role',  pk, details=request.data)
                 return Response(serializer.data)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except Role.DoesNotExist:
@@ -931,6 +958,7 @@ class RoleDetailView(APIView):
         try:
             role = Role.objects.get(pk=pk)
             role.delete()
+            log_user_action(request, 'delete', 'Role', pk)
             return Response(status=status.HTTP_204_NO_CONTENT)
         except Role.DoesNotExist:
             return Response({"error": "Role not found"}, status=status.HTTP_404_NOT_FOUND)
@@ -955,6 +983,7 @@ class RolePermissionListView(APIView):
         serializer = RolePermissionSerializer(data=request.data)
         if serializer.is_valid():
             serializer.save()
+            log_user_action(request, 'create', 'RolePermission', details=request.data)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -975,6 +1004,7 @@ class RolePermissionDetailView(APIView):
             serializer = RolePermissionSerializer(permission, data=request.data, partial=True)
             if serializer.is_valid():
                 serializer.save()
+                log_user_action(request, 'update', 'RolePermission', pk, request.data)
                 return Response(serializer.data)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except RolePermission.DoesNotExist:
@@ -984,50 +1014,16 @@ class RolePermissionDetailView(APIView):
         try:
             permission = RolePermission.objects.get(pk=pk)
             permission.delete()
+            log_user_action(request, 'delete', 'RolePermission', pk)
             return Response(status=status.HTTP_204_NO_CONTENT)
         except RolePermission.DoesNotExist:
             return Response({"error": "Permission not found"}, status=status.HTTP_404_NOT_FOUND)
 
 
 
-class UserActionLogListView(APIView):
-    # permission_classes = [IsAuthenticated, IsAdminUser]
-    pagination_class = StandardPagination
-
-    def get(self, request):
-        """获取操作日志列表"""
-        logs = UserActionLog.objects.all().order_by('-timestamp')
-        
-        # 筛选参数
-        user_id = request.query_params.get('user_id')
-        action_type = request.query_params.get('action_type')
-        model_name = request.query_params.get('model_name')
-        
-        if user_id:
-            logs = logs.filter(user_id=user_id)
-        if action_type:
-            logs = logs.filter(action_type=action_type)
-        if model_name:
-            logs = logs.filter(model_name=model_name)
-
-        paginator = self.pagination_class()
-        page = paginator.paginate_queryset(logs, request)
-        serializer = UserActionLogSerializer(page, many=True)
-        return Response(paginator.get_paginated_response(serializer.data))
 
 
-class UserActionLogDetailView(APIView):
-    # permission_classes = [IsAuthenticated, IsAdminUser]
 
-    def get(self, request, pk):
-        """获取单条操作日志详情"""
-        try:
-            log = UserActionLog.objects.get(pk=pk)
-            serializer = UserActionLogSerializer(log)
-            return Response(serializer.data)
-        except UserActionLog.DoesNotExist:
-            return Response({"error": "Log not found"}, status=status.HTTP_404_NOT_FOUND)
-        
 
 class InitializeRolesView(APIView):
     # permission_classes = [IsAuthenticated, IsAdminUser]
@@ -1116,16 +1112,16 @@ class ExportExercisesByCategoryView(APIView):
                             "render_type": a.render_type
                         } for a in exercise.analyses.all()
                     ],
-                    "exerciseFrom": {
-                        "isOfficialExercise": exercise.exercise_from.is_official_exercise if exercise.exercise_from else 0,
-                        "fromSchool": exercise.exercise_from.exam.from_school if exercise.exercise_from and exercise.exercise_from.exam else "",
-                        "examTime": exercise.exercise_from.exam.exam_time if exercise.exercise_from and exercise.exercise_from.exam else "",
-                        "examCode": exercise.exercise_from.exam.exam_code if exercise.exercise_from and exercise.exercise_from.exam else "",
-                        "examFullName": exercise.exercise_from.exam.exam_full_name if exercise.exercise_from and exercise.exercise_from.exam else "",
-                        "exerciseNumber": exercise.exercise_from.exercise_number if exercise.exercise_from else 0,
-                        "materialName": exercise.exercise_from.material_name if exercise.exercise_from else "",
+                    "exercise_from": {
+                        "is_official_exercise": exercise.exercise_from.is_official_exercise if exercise.exercise_from else 0,
+                        "from_school": exercise.exercise_from.exam.from_school if exercise.exercise_from and exercise.exercise_from.exam else "",
+                        "exam_time": exercise.exercise_from.exam.exam_time if exercise.exercise_from and exercise.exercise_from.exam else "",
+                        "exam_code": exercise.exercise_from.exam.exam_code if exercise.exercise_from and exercise.exercise_from.exam else "",
+                        "exam_full_name": exercise.exercise_from.exam.exam_full_name if exercise.exercise_from and exercise.exercise_from.exam else "",
+                        "exercise_number": exercise.exercise_from.exercise_number if exercise.exercise_from else 0,
+                        "material_name": exercise.exercise_from.material_name if exercise.exercise_from else "",
                         "section": exercise.exercise_from.section if exercise.exercise_from else "",
-                        "pageNumber": exercise.exercise_from.page_number if exercise.exercise_from else 0
+                        "page_number": exercise.exercise_from.page_number if exercise.exercise_from else 0
                     },
                     "image_links": [
                         {
@@ -1151,7 +1147,7 @@ class ExportExercisesByCategoryView(APIView):
         except Category.DoesNotExist:
             return Response({"error": "Category not found"}, status=404)
 
-        # 使用 Cast 将 exercise_id 转换为整数并排序
+        
         exercises = Exercise.objects.filter(category=category).order_by('exercise_id').select_related(
                     'exercise_type', 'category', 'major', 'chapter', 'exam_group', 'source', 'stem', 'answer', 'analysis', 'exercise_from'
                     ).prefetch_related(
@@ -1166,18 +1162,216 @@ class ExportExercisesByCategoryView(APIView):
             content_type='application/json'
         )
         response['Content-Disposition'] = f'attachment; filename="exercises_category_{category_id}.json"'
+        log_user_action(request, 'export')
+        return response
+
+
+class ExportExercisesView(APIView):
+    def generate_json_stream(self, exercises):
+        """生成器函数，流式生成 JSON 数据"""
+        logger.info("Starting JSON stream generation")
+        yield '['
+        batch = []
+        batch_size = 10  # 每批次处理 10 条记录
+        exercise_count = 0
+
+        for exercise in exercises:
+            try:
+                exercise_count += 1
+                logger.debug(f"Processing exercise: {exercise.exercise_id}")
+
+                exercise_data = {
+                    "exercise_id": exercise.exercise_id,
+                    "category": exercise.category.category_name if exercise.category else None,
+                    "major": exercise.major.major_name if exercise.major else None,
+                    "chapter": exercise.chapter.chapter_name if exercise.chapter else None,
+                    "examgroup": exercise.exam_group.examgroup_name if exercise.exam_group else None,
+                    "source": exercise.source.source_name if exercise.source else None,
+                    "type": exercise.exercise_type.type_name if exercise.exercise_type else None,
+                    "level": exercise.level,
+                    "score": exercise.score,
+                    "stem": exercise.stem.stem_content if exercise.stem else None,
+                    "questions": [
+                        {
+                            "question_order": q.question_order,
+                            "question_stem": q.question_stem,
+                            "question_answer": q.question_answer,
+                            "question_analysis": q.question_analysis
+                        } for q in exercise.questions.all()
+                    ],
+                    "answer": [
+                        {
+                            "answer_content": a.answer_content,
+                            "mark": a.mark,
+                            "from_model": a.from_model,
+                            "render_type": a.render_type
+                        } for a in exercise.answers.all()
+                    ],
+                    "analysis": [
+                        {
+                            "analysis_content": a.analysis_content,
+                            "mark": a.mark,
+                            "render_type": a.render_type
+                        } for a in exercise.analyses.all()
+                    ],
+                    "exercise_from": {
+                        "is_official_exercise": exercise.exercise_from.is_official_exercise if exercise.exercise_from else 0,
+                        "from_school": exercise.exercise_from.exam.from_school if exercise.exercise_from and exercise.exercise_from.exam else "",
+                        "exam_time": exercise.exercise_from.exam.exam_time if exercise.exercise_from and exercise.exercise_from.exam else "",
+                        "exam_code": exercise.exercise_from.exam.exam_code if exercise.exercise_from and exercise.exercise_from.exam else "",
+                        "exam_full_name": exercise.exercise_from.exam.exam_full_name if exercise.exercise_from and exercise.exercise_from.exam else "",
+                        "exercise_number": exercise.exercise_from.exercise_number if exercise.exercise_from else 0,
+                        "material_name": exercise.exercise_from.material_name if exercise.exercise_from else "",
+                        "section": exercise.exercise_from.section if exercise.exercise_from else "",
+                        "page_number": exercise.exercise_from.page_number if exercise.exercise_from else 0
+                    },
+                    "image_links": [
+                        {
+                            "image_link": img.image_link,
+                            "source_type": img.source_type,
+                            "is_deprecated": img.is_deprecated,
+                            "ocr_result": img.ocr_result
+                        } for img in exercise.exercise_images.all()
+                    ]
+                }
+                batch.append(exercise_data)
+
+                if len(batch) >= batch_size:
+                    yield json.dumps(batch, ensure_ascii=False, cls=DjangoJSONEncoder)[1:-1]
+                    batch = []
+                    yield ',' if exercise_count < total_exercises else ''
+
+            except Exception as e:
+                logger.error(f"Error processing exercise {exercise.exercise_id}: {str(e)}")
+                continue
+
+        if batch:  # 处理剩余的 batch
+            yield json.dumps(batch, ensure_ascii=False, cls=DjangoJSONEncoder)[1:-1]
+        yield ']'
+        logger.info(f"Finished generating JSON stream, total exercises: {exercise_count}")
+
+    def get(self, request):
+        # 获取查询参数
+        category_id = request.query_params.get('category_id')
+        major_id = request.query_params.get('major_id')
+        chapter_id = request.query_params.get('chapter_id')
+        examgroup_id = request.query_params.get('examgroup_id')
+        school_id = request.query_params.get('school_id')
+        exam_id = request.query_params.get('exam_id')
+
+        # 构建查询集
+        exercises = Exercise.objects.select_related(
+            'exercise_type', 'category', 'major', 'chapter', 'exam_group', 'source', 'stem', 'answer', 'analysis', 'exercise_from'
+        ).prefetch_related(
+            'questions', 'answers', 'analyses', 'exercise_from__exam', 'exercise_images'
+        )
+
+        # 应用过滤条件
+        filters_applied = False
+        if category_id:
+            try:
+                Category.objects.get(category_id=category_id)
+                exercises = exercises.filter(category_id=category_id)
+                filters_applied = True
+            except Category.DoesNotExist:
+                return Response({"error": "Category not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        if major_id:
+            try:
+                Major.objects.get(major_id=major_id)
+                exercises = exercises.filter(major_id=major_id)
+                filters_applied = True
+            except Major.DoesNotExist:
+                return Response({"error": "Major not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        if chapter_id:
+            try:
+                Chapter.objects.get(chapter_id=chapter_id)
+                exercises = exercises.filter(chapter_id=chapter_id)
+                filters_applied = True
+            except Chapter.DoesNotExist:
+                return Response({"error": "Chapter not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        if examgroup_id:
+            try:
+                ExamGroup.objects.get(examgroup_id=examgroup_id)
+                exercises = exercises.filter(exam_group_id=examgroup_id)
+                filters_applied = True
+            except ExamGroup.DoesNotExist:
+                return Response({"error": "ExamGroup not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        if school_id:
+            try:
+                School.objects.get(school_id=school_id)
+                exercises = exercises.filter(exercise_from__exam__school_id=school_id)
+                filters_applied = True
+            except School.DoesNotExist:
+                return Response({"error": "School not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        if exam_id:
+            try:
+                Exam.objects.get(exam_id=exam_id)
+                exercises = exercises.filter(exercise_from__exam_id=exam_id)
+                filters_applied = True
+            except Exam.DoesNotExist:
+                return Response({"error": "Exam not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        # 如果没有任何过滤条件，返回错误
+        if not filters_applied:
+            return Response({"error": "At least one filter parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 计算总数用于日志
+        global total_exercises
+        total_exercises = exercises.count()
+
+        # 按 exercise_id 排序并转换为生成器
+        exercises = exercises.order_by('exercise_id').iterator(chunk_size=500)
+
+        # 记录日志
+        logger.info(f"Exporting {total_exercises} exercises with filters: "
+                    f"category_id={category_id}, major_id={major_id}, chapter_id={chapter_id}, "
+                    f"examgroup_id={examgroup_id}, school_id={school_id}, exam_id={exam_id}")
+
+        # 动态生成文件名，添加时间戳
+        filename_parts = []
+        if category_id:
+            filename_parts.append(f"category_{category_id}")
+        if major_id:
+            filename_parts.append(f"major_{major_id}")
+        if chapter_id:
+            filename_parts.append(f"chapter_{chapter_id}")
+        if examgroup_id:
+            filename_parts.append(f"examgroup_{examgroup_id}")
+        if school_id:
+            filename_parts.append(f"school_{school_id}")
+        if exam_id:
+            filename_parts.append(f"exam_{exam_id}")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"exercises_{'_'.join(filename_parts)}_{timestamp}.json" if filename_parts else f"exercises_{timestamp}.json"
+
+        # 返回流式响应
+        response = StreamingHttpResponse(
+            self.generate_json_stream(exercises),
+            content_type='application/json'
+        )
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        log_user_action(request, 'export', 'Exercise', details={
+            'category_id': category_id,
+            'major_id': major_id,
+            'chapter_id': chapter_id,
+            'examgroup_id': examgroup_id,
+            'school_id': school_id,
+            'exam_id': exam_id,
+            'total_exercises': total_exercises
+        })
         return response
 
 
 
-
 class ImportExercisesView(APIView):
-
-
     def post(self, request):
-        
         file_obj = request.FILES.get('file')
-        logger.info(f"Received FILES: {request.FILES}")
+        # logger.info(f"Received FILES: {request.FILES}")
         if not file_obj or not isinstance(file_obj, UploadedFile):
             logger.error("No valid file uploaded in request")
             return Response({"error": "No valid file uploaded"}, status=status.HTTP_400_BAD_REQUEST)
@@ -1189,34 +1383,104 @@ class ImportExercisesView(APIView):
                 decoded_data = decoded_data[1:]
 
             exercises_data = json.loads(decoded_data)
-            logger.info(f"Parsed exercises data: {exercises_data}")
+            logger.info(f"Parsed {len(exercises_data)} exercises from file")
             if not isinstance(exercises_data, list):
                 logger.debug("Data is not a list, converting to single-item list")
                 exercises_data = [exercises_data]
 
-
-            # 使用 BulkExerciseSerializer 批量创建
+            # 使用 BulkExerciseSerializer
             bulk_serializer = BulkExerciseSerializer(data=exercises_data)
-            logger.debug(f"Bulk serializer initialized, class: {bulk_serializer.__class__.__name__}")
             if bulk_serializer.is_valid():
                 with transaction.atomic():
-                    logger.debug("Starting transaction for saving exercises")
                     exercises = bulk_serializer.save()
-                    logger.info(f"Imported {len(exercises)} exercises by user {request.user.username}")
-                    logger.debug(f"Saved exercises: {[e.exercise_id for e in exercises]}")
-                    return Response({"message": f"Successfully imported {len(exercises)} exercises"}, 
-                                  status=status.HTTP_201_CREATED)
+                    count = len(exercises)
+                    logger.info(f"Imported {count} exercises by user {request.user.username}")
+                    log_user_action(request, 'import', 'Exercise', details={
+                        'count': count,
+                        'filename': file_obj.name
+                    })
+                    return Response({
+                        "message": f"Successfully imported {count} exercises",
+                        "count": count
+                    }, status=status.HTTP_201_CREATED)
             else:
                 logger.error(f"Bulk validation errors: {bulk_serializer.errors}")
-                # logger.error(f"Bulk validation errors: {traceback.format_exc()}")
-                return Response(bulk_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+                # 格式化错误信息
+                error_detail = {
+                    "error": "Invalid data",
+                    "details": bulk_serializer.errors
+                }
+                return Response(error_detail, status=status.HTTP_400_BAD_REQUEST)
 
         except UnicodeDecodeError as e:
             logger.error(f"Unicode decode error: {str(e)}")
             return Response({"error": "File must be UTF-8 encoded"}, status=status.HTTP_400_BAD_REQUEST)
         except json.JSONDecodeError as e:
             logger.error(f"JSON decode error: {str(e)}")
-            return Response({"error": "Invalid JSON format"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": f"Invalid JSON format: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            logger.error(f"Import error: {traceback.format_exc()}")
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.error(f"Import error: {str(e)}")
+            return Response({"error": f"Server error: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+
+class UserActionLogListView(generics.ListAPIView):
+    queryset = UserActionLog.objects.select_related('user').order_by('-timestamp')
+    serializer_class = UserActionLogSerializer
+    # permission_classes = [IsAdminUser]  # 保持注释状态
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        params = self.request.query_params
+
+        # 定义允许的筛选字段
+        filters = {}
+        valid_fields = {
+            'id': 'id',
+            'action_type': 'action_type',
+            'model_name': 'model_name',
+            'object_id': 'object_id',
+            'ip_address': 'ip_address',
+            'username': 'user__username',  # 替换 user_id
+        }
+
+        # 精确匹配字段
+        for param, field in valid_fields.items():
+            if param in params:
+                value = params.get(param)
+                if value:  # 忽略空值
+                    filters[field] = value
+
+        # 时间范围筛选
+        if 'timestamp_gte' in params:
+            try:
+                timestamp_gte = parse_datetime(params.get('timestamp_gte'))
+                if timestamp_gte:
+                    filters['timestamp__gte'] = timestamp_gte
+                else:
+                    raise ValidationError({"timestamp_gte": "Invalid datetime format"})
+            except ValueError:
+                raise ValidationError({"timestamp_gte": "Invalid datetime format"})
+
+        if 'timestamp_lte' in params:
+            try:
+                timestamp_lte = parse_datetime(params.get('timestamp_lte'))
+                if timestamp_lte:
+                    filters['timestamp__lte'] = timestamp_lte
+                else:
+                    raise ValidationError({"timestamp_lte": "Invalid datetime format"})
+            except ValueError:
+                raise ValidationError({"timestamp_lte": "Invalid datetime format"})
+
+        # 应用筛选
+        if filters:
+            queryset = queryset.filter(**filters)
+
+        return queryset
+
+class UserActionLogDeleteView(generics.DestroyAPIView):
+    queryset = UserActionLog.objects.all()
+    permission_classes = [IsAdminUser]
+    lookup_field = 'id'

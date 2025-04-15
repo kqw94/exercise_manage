@@ -9,8 +9,8 @@ from .views import (
     ChapterCreate, ChapterDetail, ExamGroupCreate, ExamGroupDetail, ExamSchoolListByCategoryId,
     RegisterView, LoginView, LogoutView, UserListView, UserDetailView, RoleListView, 
     RoleDetailView, RolePermissionListView, RolePermissionDetailView, UserActionLogListView,
-    UserActionLogDetailView, InitializeRolesView, ExportExercisesByCategoryView, ImportExercisesView,
-    BulkExerciseCreateView
+    InitializeRolesView, ExportExercisesByCategoryView, ImportExercisesView,
+    BulkExerciseCreateView, UserActionLogDeleteView, ExportExercisesView
 )
 
 urlpatterns = [
@@ -74,12 +74,14 @@ urlpatterns = [
     path('crud/examgroups/create/', ExamGroupCreate.as_view(), name='crud-examgroup-create'),
     path('crud/examgroups/<int:examgroup_id>/', ExamGroupDetail.as_view(), name='crud-examgroup-detail'),
 
-    path('user-action-logs/', UserActionLogListView.as_view(), name='user_action_log_list'),
-    path('user-action-logs/<int:pk>/', UserActionLogDetailView.as_view(), name='user_action_log_detail'),
     path('initialize-roles/', InitializeRolesView.as_view(), name='initialize_roles'),
 
     path('export-exercises-by-category/<int:category_id>/', ExportExercisesByCategoryView.as_view(), name='export-exercises-by-category'),
+    path('export-exercises/', ExportExercisesView.as_view(), name='export-exercises'),
+    
     path('import-exercises/', ImportExercisesView.as_view(), name='import_exercises'),
     path('exercises/bulk/', BulkExerciseCreateView.as_view(), name='bulk-exercise-create'),
+    path('user-action-logs/', UserActionLogListView.as_view(), name='user-action-log-list'),
+    path('user-action-logs/<int:id>/', UserActionLogDeleteView.as_view(), name='user-action-log-delete'),
 
 ]

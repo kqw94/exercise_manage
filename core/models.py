@@ -41,9 +41,9 @@ class ExerciseStem(models.Model):
 class Question(models.Model):
     question_id = models.AutoField(primary_key=True)
     exercise = models.ForeignKey(Exercise, on_delete=models.CASCADE, related_name='questions')
-    question_order = models.IntegerField(default=0)
+    question_order = models.IntegerField(blank=True, null=True)
     question_stem = models.TextField(blank=True, null=True)
-    question_answer = models.TextField()
+    question_answer = models.TextField(blank=True, null=True)
     question_analysis = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     text1 = models.TextField(blank=True, null=True)
@@ -70,7 +70,7 @@ class ExerciseAnswer(models.Model):
 class ExerciseAnalysis(models.Model):
     analysis_id = models.AutoField(primary_key=True)
     exercise = models.ForeignKey(Exercise, related_name='analyses', null=True, on_delete=models.CASCADE)
-    analysis_content = models.TextField()
+    analysis_content = models.TextField(blank=True, null=True)
     mark = models.CharField(max_length=20, null=True)
     from_model = models.CharField(max_length=20, blank=True, null=True)  # 新增字段
     render_type = models.CharField(max_length=20, null=True)
@@ -102,19 +102,20 @@ class ExerciseImage(models.Model):
     # 定义第一个字段的选择项
     SOURCE_TYPES = (
         ('stem', 'Stem'),        # 题干
-        ('question', 'Question'), # 问题
+        ('questions', 'Questions'), # 问题
         ('answer', 'Answer'),     # 答案
         ('analysis', 'Analysis'), # 解析
     )
     image_id = models.AutoField(primary_key=True)
     exercise = models.ForeignKey(Exercise, on_delete=models.CASCADE, related_name='exercise_images')
-    image_link = models.TextField()
+    image_link = models.TextField(blank=True, null=True, default="")
     
     # 新增的第一个字段：表示内容类型
     source_type = models.CharField(
         max_length=20,
         choices=SOURCE_TYPES,
         default='stem',  # 可选：设置默认值
+        blank =True
     )    
     # 新增的第二个字段：表示是否废弃
     is_deprecated = models.BooleanField(default=False)  # 默认值为 False，表示未废弃
@@ -283,6 +284,8 @@ class UserActionLog(models.Model):
         ('read', '读取'),
         ('update', '更新'),
         ('delete', '删除'),
+        ('import', '导入'),
+        ('export', '导出'),
         ('login', '登录'),
         ('logout', '登出'),
     )

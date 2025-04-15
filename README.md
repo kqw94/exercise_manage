@@ -26,6 +26,15 @@
 
 2. chrome 页面内存不断增长问题
 
-3. 前端在章节管理/试卷管理 保存逻辑有问题，会给题干加入stem_content，选项内容也改错
+3. 
 
+Exercise接口
 
+|        | 单个                                     | 批量                                             |
+|:------ |:--------------------------------------:|:----------------------------------------------:|
+| GET    | ExerciseList -> ExerciseSerializer     | ExerciseList -> ExerciseSerializer             |
+| POST   | ExerciseWrite->ExerciseWriteSerializer | BulkExerciseWrite->BulkExerciseWriteSerializer |
+| PUT    | ExerciseWrite->ExerciseWriteSerializer | BulkExerciseWrite->BulkExerciseWriteSerializer |
+| DELETE | ExerciseList                           | BulkExerciseWrite                              |
+
+post/put 单个/批量 合并，都用ExerciseWriteSerializer和ExerciseWrite
