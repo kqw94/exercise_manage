@@ -143,6 +143,7 @@ class ExamGroupListByChapter(APIView):
 
 # 复用并扩展 ExerciseList，支持所有筛选条件
 class ExerciseList(APIView):
+    permission_classes = [IsAuthenticated]
     pagination_class = StandardPagination
 
    
@@ -313,6 +314,7 @@ class ExerciseList(APIView):
             logger.error(f"Error updating exercise {str(exercise_id)}: {str(e)}")
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
+    @require_permission('Exercise', 'create')
     def post(self, request):
         """添加 Exercise"""
         
@@ -328,6 +330,7 @@ class ExerciseList(APIView):
                 return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
+    @require_permission('Exercise', 'delete')
     def delete(self, request, exercise_id=None):
         """删除 Exercise"""
        
@@ -453,7 +456,7 @@ class SchoolList(APIView):
         serializer = SchoolSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
-    #@require_permission('School', 'create')
+    @require_permission('School', 'create')
     def post(self, request):
         """创建新学校"""
         serializer = SchoolSerializer(data=request.data)
@@ -477,7 +480,7 @@ class SchoolDetail(APIView):
         serializer = SchoolSerializer(school)
         return Response(serializer.data)
 
-    #@require_permission('School', 'update')
+    @require_permission('School', 'update')
     def put(self, request, pk):
         """更新学校"""
         school = self.get_object(pk)
@@ -488,7 +491,7 @@ class SchoolDetail(APIView):
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    #@require_permission('School', 'delete')
+    @require_permission('School', 'delete')
     def delete(self, request, pk):
         """删除学校"""
         school = self.get_object(pk)
@@ -530,7 +533,7 @@ class ExamList(APIView):
         serializer = ExamSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
-    #@require_permission('Exam', 'create')
+    @require_permission('Exam', 'create')
     def post(self, request):
         """创建新试卷"""
         serializer = ExamSerializer(data=request.data)
@@ -554,7 +557,7 @@ class ExamDetail(APIView):
         serializer = ExamSerializer(exam)
         return Response(serializer.data)
 
-    #@require_permission('Exam', 'update')
+    @require_permission('Exam', 'update')
     def put(self, request, pk):
         """更新试卷"""
         exam = self.get_object(pk)
@@ -565,7 +568,7 @@ class ExamDetail(APIView):
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    #@require_permission('Exam', 'delete')
+    @require_permission('Exam', 'delete')
     def delete(self, request, pk):
         """删除试卷"""
         exam = self.get_object(pk)
@@ -638,7 +641,7 @@ class ExamFullNameList(APIView):
 # Category CRUD
 class CategoryCreate(APIView):
 
-    #@require_permission('Category', 'create')
+    @require_permission('Category', 'create')
     def post(self, request):
         serializer = CategorySerializer(data=request.data)
         if serializer.is_valid():
@@ -656,7 +659,7 @@ class CategoryDetail(APIView):
         except Category.DoesNotExist:
             return Response({"error": "Category not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    #@require_permission('Category', 'update')
+    @require_permission('Category', 'update')
     def put(self, request, category_id):
         try:
             category = Category.objects.get(category_id=category_id)
@@ -669,7 +672,7 @@ class CategoryDetail(APIView):
         except Category.DoesNotExist:
             return Response({"error": "Category not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    #@require_permission('Category', 'delete')
+    @require_permission('Category', 'delete')
     def delete(self, request, category_id):
         try:
             category = Category.objects.get(category_id=category_id)
@@ -681,7 +684,7 @@ class CategoryDetail(APIView):
 
 # Major CRUD
 class MajorCreate(APIView):
-    #@require_permission('Major', 'create')
+    @require_permission('Major', 'create')
     def post(self, request):
         serializer = MajorSerializer(data=request.data)
         if serializer.is_valid():
@@ -699,7 +702,7 @@ class MajorDetail(APIView):
         except Major.DoesNotExist:
             return Response({"error": "Major not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    #@require_permission('Major', 'update')
+    @require_permission('Major', 'update')
     def put(self, request, major_id):
         try:
             major = Major.objects.get(major_id=major_id)
@@ -712,7 +715,7 @@ class MajorDetail(APIView):
         except Major.DoesNotExist:
             return Response({"error": "Major not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    #@require_permission('Major', 'delete')
+    @require_permission('Major', 'delete')
     def delete(self, request, major_id):
         try:
             major = Major.objects.get(major_id=major_id)
@@ -724,7 +727,7 @@ class MajorDetail(APIView):
 
 # Chapter CRUD
 class ChapterCreate(APIView):
-    #@require_permission('Chapter', 'create')
+    @require_permission('Chapter', 'create')
     def post(self, request):
         serializer = ChapterSerializer(data=request.data)
         if serializer.is_valid():
@@ -742,7 +745,7 @@ class ChapterDetail(APIView):
         except Chapter.DoesNotExist:
             return Response({"error": "Chapter not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    #@require_permission('Chapter', 'update')
+    @require_permission('Chapter', 'update')
     def put(self, request, chapter_id):
         try:
             chapter = Chapter.objects.get(chapter_id=chapter_id)
@@ -755,7 +758,7 @@ class ChapterDetail(APIView):
         except Chapter.DoesNotExist:
             return Response({"error": "Chapter not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    #@require_permission('Chapter', 'delete')
+    @require_permission('Chapter', 'delete')
     def delete(self, request, chapter_id):
         try:
             chapter = Chapter.objects.get(chapter_id=chapter_id)
@@ -767,7 +770,7 @@ class ChapterDetail(APIView):
 
 # ExamGroup CRUD
 class ExamGroupCreate(APIView):
-    #@require_permission('ExamGroup', 'create')
+    @require_permission('ExamGroup', 'create')
     def post(self, request):
         serializer = ExamGroupSerializer(data=request.data)
         if serializer.is_valid():
@@ -785,7 +788,7 @@ class ExamGroupDetail(APIView):
         except ExamGroup.DoesNotExist:
             return Response({"error": "ExamGroup not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    #@require_permission('ExamGroup', 'update')
+    @require_permission('ExamGroup', 'update')
     def put(self, request, examgroup_id):
         try:
             examgroup = ExamGroup.objects.get(examgroup_id=examgroup_id)
@@ -798,7 +801,7 @@ class ExamGroupDetail(APIView):
         except ExamGroup.DoesNotExist:
             return Response({"error": "ExamGroup not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    #@require_permission('ExamGroup', 'delete')
+    @require_permission('ExamGroup', 'delete')
     def delete(self, request, examgroup_id):
         try:
             examgroup = ExamGroup.objects.get(examgroup_id=examgroup_id)
@@ -893,7 +896,7 @@ class UserListView(APIView):
     # permission_classes = [IsAuthenticated, IsAdminUser]
     pagination_class = StandardPagination
 
-    #@require_permission('User', 'read')
+    @require_permission('User', 'read')
     def get(self, request):
         users = User.objects.all()
         paginator = self.pagination_class()
@@ -901,7 +904,7 @@ class UserListView(APIView):
         serializer = UserSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
-    #@require_permission('User', 'create')
+    @require_permission('User', 'create')
     def post(self, request):
         serializer = UserSerializer(data=request.data)
         if serializer.is_valid():
@@ -919,7 +922,7 @@ class UserListView(APIView):
 class UserDetailView(APIView):
     # permission_classes = [IsAuthenticated, IsAdminUser]
 
-    #@require_permission('User', 'update')
+    @require_permission('User', 'update')
     def put(self, request, pk):
         try:
             user = User.objects.get(pk=pk)
@@ -946,7 +949,7 @@ class RoleListView(APIView):
     # permission_classes = [IsAuthenticated, IsAdminUser]
     pagination_class = StandardPagination
 
-    #@require_permission('Role', 'read')
+    @require_permission('Role', 'read')
     def get(self, request):
         roles = Role.objects.all()
         paginator = self.pagination_class()
@@ -954,7 +957,7 @@ class RoleListView(APIView):
         serializer = RoleSerializer(page, many=True)
         return paginator.get_paginated_response(serializer.data)
 
-    #@require_permission('Role', 'create')
+    @require_permission('Role', 'create')
     def post(self, request):
         serializer = RoleSerializer(data=request.data)
         if serializer.is_valid():
@@ -975,7 +978,7 @@ class RoleDetailView(APIView):
         except Role.DoesNotExist:
             return Response({"error": "Role not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    #@require_permission('Role', 'update')
+    @require_permission('Role', 'update')
     def put(self, request, pk):
         try:
             role = Role.objects.get(pk=pk)
@@ -988,7 +991,7 @@ class RoleDetailView(APIView):
         except Role.DoesNotExist:
             return Response({"error": "Role not found"}, status=status.HTTP_404_NOT_FOUND)
 
-    #@require_permission('Role', 'delete')
+    @require_permission('Role', 'delete')
     def delete(self, request, pk):
         try:
             role = Role.objects.get(pk=pk)
@@ -1001,7 +1004,7 @@ class RoleDetailView(APIView):
 # --- 角色权限管理 ---
 
 class RolePermissionListView(APIView):
-    # permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdminUser]
     pagination_class = StandardPagination
 
     def get(self, request):
@@ -1023,7 +1026,7 @@ class RolePermissionListView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class RolePermissionDetailView(APIView):
-    # permission_classes = [IsAuthenticated, IsAdminUser]
+    permission_classes = [IsAuthenticated, IsAdminUser]
 
     def get(self, request, pk):
         try:
@@ -1096,7 +1099,7 @@ class InitializeRolesView(APIView):
     
 
 class ExportExercisesByCategoryView(APIView):
-    
+    permission_classes = [IsAuthenticated, IsAdminUser]
 
     def generate_json_stream(self, exercises):
         """生成器函数，流式生成 JSON 数据"""
@@ -1202,6 +1205,7 @@ class ExportExercisesByCategoryView(APIView):
 
 
 class ExportExercisesView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
     def generate_json_stream(self, exercises):
         """生成器函数，流式生成 JSON 数据"""
         logger.info("Starting JSON stream generation")
@@ -1404,6 +1408,7 @@ class ExportExercisesView(APIView):
 
 
 class ImportExercisesView(APIView):
+    permission_classes = [IsAuthenticated, IsAdminUser]
     def post(self, request):
         file_obj = request.FILES.get('file')
         # logger.info(f"Received FILES: {request.FILES}")
@@ -1462,9 +1467,9 @@ class ImportExercisesView(APIView):
 
 
 class UserActionLogListView(generics.ListAPIView):
+    permission_classes = [IsAdminUser]  # 保持注释状态
     queryset = UserActionLog.objects.select_related('user').order_by('-timestamp')
     serializer_class = UserActionLogSerializer
-    # permission_classes = [IsAdminUser]  # 保持注释状态
 
     def get_queryset(self):
         queryset = super().get_queryset()
