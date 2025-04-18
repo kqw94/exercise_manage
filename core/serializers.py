@@ -605,13 +605,13 @@ class UserRegisterSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         validated_data.pop('confirm_password')
-        role = validated_data.pop('role', None) or Role.objects.get(name='user')  # 默认角色为 'user'
+        # role = validated_data.pop('role', None) or Role.objects.get(name='user')  # 默认角色为 'user'
         user = User.objects.create_user(
             username=validated_data['username'],
             email=validated_data.get('email', ''),
             password=validated_data['password'],
             phone=validated_data.get('phone', ''),
-            role=role
+            # role=role
         )
         return user
 
