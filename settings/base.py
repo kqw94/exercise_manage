@@ -48,7 +48,7 @@ REST_FRAMEWORK = {
 from datetime import timedelta
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=5),  # 访问令牌生命周期短
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),  # 访问令牌生命周期短
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),    # 将刷新令牌延长至7天
     'ROTATE_REFRESH_TOKENS': True,                 # 刷新时发行新刷新令牌
     'BLACKLIST_AFTER_ROTATION': True,              # 旧刷新令牌列入黑名单
