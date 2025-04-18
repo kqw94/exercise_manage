@@ -243,7 +243,7 @@ class ExerciseList(APIView):
         # log_user_action(request, 'read', 'Exercise')
         return paginator.get_paginated_response(serializer.data)
 
-    #@require_permission('Exercise', 'update')
+    @require_permission('Exercise', 'update')
     def put(self, request, exercise_id=None):
         
         logger.debug(f"Received PUT request data: {request.data}")
@@ -327,7 +327,7 @@ class ExerciseList(APIView):
                 logger.error(f"Error creating exercise: {str(e)}")
                 return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
+    
     def delete(self, request, exercise_id=None):
         """删除 Exercise"""
        
@@ -827,30 +827,65 @@ class RegisterView(APIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+
 class LoginView(APIView):
     def post(self, request):
         serializer = UserLoginSerializer(data=request.data)
         if serializer.is_valid():
             user = serializer.validated_data
-            login(request, user)
+            # 移除基于会话的登录
+            # login(request, user)
             refresh = RefreshToken.for_user(user)
-            # log_user_action(request, 'login', 'User', str(user.id))
+            log_user_action(request, 'login', 'User', str(user.id))
             return Response({
                 'refresh': str(refresh),
                 'access': str(refresh.access_token),
                 'user': UserSerializer(user).data
             }, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_401_UNAUTHORIZED)
+    
 
 
 class LogoutView(APIView):
-    # permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        user_id = str(request.user.id)
-        logout(request)
-        # log_user_action(request, 'logout', 'User', user_id)
-        return Response({"message": "Logged out successfully"}, status=status.HTTP_200_OK)
+        try:
+            # 从请求数据中获取刷新令牌
+            refresh_token = request.data.get('refresh')
+            if not refresh_token:
+                return Response({"error": "需要提供刷新令牌"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # 将刷新令牌列入黑名单
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+
+            # 记录操作
+            user_id = str(request.user.id)
+            log_user_action(request, 'logout', 'User', user_id)
+            return Response({"message": "登出成功"}, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"登出错误: {str(e)}")
+            return Response({"error": "无效或已过期的令牌"}, status=status.HTTP_400_BAD_REQUEST)
+
+class RefreshTokenView(APIView):
+    def post(self, request):
+        refresh_token = request.data.get('refresh')
+        if not refresh_token:
+            return Response({"error": "需要提供刷新令牌"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            token = RefreshToken(refresh_token)
+            access_token = str(token.access_token)
+            return Response({
+                'access': access_token,
+                'refresh': str(token)  # 可选：返回新的刷新令牌
+            }, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"令牌刷新错误: {str(e)}")
+            return Response({"error": "无效或已过期的刷新令牌"}, status=status.HTTP_401_UNAUTHORIZED)
+
+
 
 # --- 2. 用户管理接口 ---
 

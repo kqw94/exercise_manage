@@ -1,5 +1,4 @@
 from django.urls import path
-from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     CategoryList, MajorListByCategory, ChapterListByMajor, ExamGroupListByChapter,
     ExerciseList, AnswerListByExercise, AnalysisListByExercise, ExerciseTypeList, SourceList, BulkExerciseUpdate,
@@ -10,7 +9,7 @@ from .views import (
     RegisterView, LoginView, LogoutView, UserListView, UserDetailView, RoleListView, 
     RoleDetailView, RolePermissionListView, RolePermissionDetailView, UserActionLogListView,
     InitializeRolesView, ExportExercisesByCategoryView, ImportExercisesView,
-    BulkExerciseCreateView, UserActionLogDeleteView, ExportExercisesView
+    BulkExerciseCreateView, UserActionLogDeleteView, ExportExercisesView, RefreshTokenView
 )
 
 urlpatterns = [
@@ -19,7 +18,7 @@ urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
     path('login/', LoginView.as_view(), name='login'),
     path('logout/', LogoutView.as_view(), name='logout'),
-    path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
+    path('token/refresh/', RefreshTokenView.as_view(), name='token_refresh'),
 
     # 用户管理
     path('users/', UserListView.as_view(), name='user_list'),

@@ -25,6 +25,8 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     "core",
     'corsheaders',
     'debug_toolbar'
@@ -35,9 +37,6 @@ REST_FRAMEWORK = {
         # 'rest_framework.permissions.IsAuthenticated',
         'rest_framework.permissions.AllowAny',
     ],
-    'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.SessionAuthentication',
-    ],
 
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -45,6 +44,17 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 10,  # 默认每页大小
 }
+
+from datetime import timedelta
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=5),  # 访问令牌生命周期短
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),    # 将刷新令牌延长至7天
+    'ROTATE_REFRESH_TOKENS': True,                 # 刷新时发行新刷新令牌
+    'BLACKLIST_AFTER_ROTATION': True,              # 旧刷新令牌列入黑名单
+    'UPDATE_LAST_LOGIN': True,
+}
+
 
 # settings.py
 LOGGING = {
