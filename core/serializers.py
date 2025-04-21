@@ -63,7 +63,7 @@ class QuestionSerializer(serializers.ModelSerializer):
 class ExerciseAnswerSerializer(serializers.ModelSerializer):
     class Meta:
         model = ExerciseAnswer
-        fields = ['answer_id', 'answer_content', 'mark', 'from_model', 'render_type']
+        fields = ['answer_id', 'answer_content', 'mark', 'from_model', 'render_type', 'answer_order']
 
 class ExerciseAnalysisSerializer(serializers.ModelSerializer):
     class Meta:

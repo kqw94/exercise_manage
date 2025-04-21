@@ -6,7 +6,7 @@ from rest_framework import status
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import ValidationError
 from django.db.models.fields import IntegerField  
-from django.db.models import Q, Func
+from django.db.models import Q, Func, Subquery, OuterRef, F
 from django.db import models, transaction 
 from django.core.files.uploadedfile import UploadedFile
 from django.http import JsonResponse, FileResponse, StreamingHttpResponse
@@ -143,13 +143,12 @@ class ExamGroupListByChapter(APIView):
 
 # 复用并扩展 ExerciseList，支持所有筛选条件
 class ExerciseList(APIView):
-    permission_classes = [IsAuthenticated]
+    # permission_classes = [IsAuthenticated]
     pagination_class = StandardPagination
 
    
     #@require_permission('Exercise', 'read')
     def get(self, request):
-        
         # 获取查询参数
         category_id = request.query_params.get('category_id')
         major_id = request.query_params.get('major_id')
@@ -168,16 +167,12 @@ class ExerciseList(APIView):
         exam_time = request.query_params.get('exam_time')
         exam_code = request.query_params.get('exam_code')
         exam_full_name = request.query_params.get('exam_full_name')
+        answer_comparison = request.query_params.get('answer_comparison')  # 新增答案对比参数
 
         # 基础查询集
-        # exercises = Exercise.objects.select_related(
-        #     'category', 'major', 'chapter', 'exam_group', 'source', 'exercise_type',
-        #     'stem', 'answer', 'analysis', 'exercise_from', 'exercise_from__exam'
-        #     ).prefetch_related('questions', 'answers', 'analyses')
-
         exercises = Exercise.objects.select_related(
-                'category', 'major', 'chapter', 'exam_group', 'source', 'exercise_type', 
-                ).prefetch_related('questions')
+            'category', 'major', 'chapter', 'exam_group', 'source', 'exercise_type',
+        ).prefetch_related('questions')
 
         # 层级筛选
         if category_id:
@@ -225,6 +220,58 @@ class ExerciseList(APIView):
                     Q(analysis__analysis_content__icontains=search)
                 ).distinct()
 
+        # 新增：答案对比筛选
+        if answer_comparison:
+            try:
+                conditions = json.loads(answer_comparison)
+                if not isinstance(conditions, list):
+                    return Response({"error": "answer_comparison must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+
+                for condition in conditions:
+                    index1 = condition.get("index1", 0)
+                    index2 = condition.get("index2", 0)
+                    operator = condition.get("operator", "equal")
+
+                    # 限制索引范围（1 到 5）
+                    if index1 < 1 or index2 < 1 or index1 > 5 or index2 > 5:
+                        return Response({"error": "Invalid index range (must be 1 to 5)"}, status=status.HTTP_400_BAD_REQUEST)
+
+                    # 子查询：获取 answer_order=index1 和 index2 的 answer_content
+                    answer1_content = Subquery(
+                        ExerciseAnswer.objects.filter(
+                            exercise=OuterRef('pk'),
+                            answer_order=index1
+                        ).values('answer_content')[:1]
+                    )
+                    answer2_content = Subquery(
+                        ExerciseAnswer.objects.filter(
+                            exercise=OuterRef('pk'),
+                            answer_order=index2
+                        ).values('answer_content')[:1]
+                    )
+
+                    # 动态构建过滤条件
+                    if operator == "equal":
+                        exercises = exercises.annotate(
+                            answer1_content=answer1_content,
+                            answer2_content=answer2_content
+                        ).filter(
+                            answer1_content=F('answer2_content')  # 相等
+                        )
+                    elif operator == "not_equal":
+                        exercises = exercises.annotate(
+                            answer1_content=answer1_content,
+                            answer2_content=answer2_content
+                        ).exclude(
+                            answer1_content=F('answer2_content')  # 不相等
+                        )
+                    else:
+                        return Response({"error": "Invalid operator (must be 'equal' or 'not_equal')"}, status=status.HTTP_400_BAD_REQUEST)
+
+            except json.JSONDecodeError:
+                return Response({"error": "Invalid JSON format for answer_comparison"}, status=status.HTTP_400_BAD_REQUEST)
+
+
         # 排序逻辑
         valid_order_fields = {
             'id': 'exercise_id',
@@ -233,8 +280,6 @@ class ExerciseList(APIView):
             'exam.exercise_number': 'exam_exercise_number'
         }
         order_field = valid_order_fields.get(order_by, 'exercise_id')
-        
-        
         exercises = exercises.order_by(order_field)
 
         # 分页
@@ -243,6 +288,8 @@ class ExerciseList(APIView):
         serializer = ExerciseSerializer(page, many=True)
         # log_user_action(request, 'read', 'Exercise')
         return paginator.get_paginated_response(serializer.data)
+
+
 
     @require_permission('Exercise', 'update')
     def put(self, request, exercise_id=None):
@@ -1243,7 +1290,8 @@ class ExportExercisesView(APIView):
                             "answer_content": a.answer_content,
                             "mark": a.mark,
                             "from_model": a.from_model,
-                            "render_type": a.render_type
+                            "render_type": a.render_type,
+                            "answer_order": a.answer_order
                         } for a in exercise.answers.all()
                     ],
                     "analysis": [

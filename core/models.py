@@ -62,9 +62,15 @@ class ExerciseAnswer(models.Model):
     render_type = models.CharField(max_length=20, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     text1 = models.TextField(blank=True, null=True)
+    answer_order = models.PositiveIntegerField(null=True, blank=True)  # 新增字段
 
     class Meta:
+        
         db_table = 'exercise_answers'
+        indexes = [
+            models.Index(fields=['exercise', 'answer_order']),  # 复合索引
+        ]
+        
 
 
 class ExerciseAnalysis(models.Model):
