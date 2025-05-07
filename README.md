@@ -26,9 +26,7 @@
 
 2. chrome 页面内存不断增长问题
 
-3. 
-
-Exercise接口
+3. Exercise接口
 
 |        | 单个                                     | 批量                                             |
 |:------ |:--------------------------------------:|:----------------------------------------------:|
@@ -38,3 +36,15 @@ Exercise接口
 | DELETE | ExerciseList                           | BulkExerciseWrite                              |
 
 post/put 单个/批量 合并，都用ExerciseWriteSerializer和ExerciseWrite
+
+4. 批量编辑页面 删除功能
+
+5. 增加根据 题目答案对比 筛选题目功能
+
+6. 用fasttext和faiss去一遍重
+
+7. 所有void main 改成 int main 并在 最后加上 return 0;
+
+8. 清理所有表格，代码，图片的格式问题
+
+9. 有些问题中在编辑模式显示错误
