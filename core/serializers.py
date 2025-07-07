@@ -330,33 +330,37 @@ class ExerciseWriteSerializer(serializers.ModelSerializer):
                     creations.append((None, data))
 
             # 处理创建
-            exercises_to_create = []
-            created_exercise_ids = []
-            for exercise_id, data in creations:
+            created_exercises = []
+            for _ignored_id, data in creations:
                 try:
+                    # 外部提供的 exercise_id 一律忽略，由数据库自动生成
                     category_name = data.pop('category')
                     category, _ = Category.objects.get_or_create(category_name=category_name)
+
                     major_name = data.pop('major', None)
                     major = None
                     if major_name:
                         major, _ = Major.objects.get_or_create(major_name=major_name, category=category)
+
                     chapter_name = data.pop('chapter', None)
                     chapter = None
                     if chapter_name and major:
                         chapter, _ = Chapter.objects.get_or_create(chapter_name=chapter_name, major=major)
+
                     examgroup_name = data.pop('examgroup', None)
                     exam_group = None
                     if examgroup_name and chapter:
                         exam_group, _ = ExamGroup.objects.get_or_create(examgroup_name=examgroup_name, chapter=chapter)
+
                     source_name = data.pop('source', None)
                     source = None
                     if source_name:
                         source, _ = Source.objects.get_or_create(source_name=source_name)
+
                     type_name = data.pop('type')
                     exercise_type, _ = ExerciseType.objects.get_or_create(type_name=type_name)
 
                     exercise_data = {
-                        'exercise_id': exercise_id,
                         'category': category,
                         'major': major,
                         'chapter': chapter,
@@ -366,25 +370,16 @@ class ExerciseWriteSerializer(serializers.ModelSerializer):
                         'level': data.pop('level', None),
                         'score': data.pop('score', None),
                     }
-                    if exercise_id is None:
-                        max_id = Exercise.objects.aggregate(Max('exercise_id'))['exercise_id__max'] or 0
-                        exercise_data['exercise_id'] = max_id + 1
-                    exercises_to_create.append(Exercise(**exercise_data))
-                    created_exercise_ids.append(exercise_data['exercise_id'])
-                except Exception as e:
-                    logger.error(f"Failed to process creation for exercise_id={exercise_id}: {str(e)}")
-                    continue
 
-            # 初始化 created_exercises
-            created_exercises = []
-            if exercises_to_create:
-                try:
-                    Exercise.objects.bulk_create(exercises_to_create, batch_size=100)
-                    logger.debug(f"Created {len(exercises_to_create)} new exercises")
-                    created_exercises = list(Exercise.objects.filter(exercise_id__in=created_exercise_ids))
+                    # 直接创建，让数据库生成自增主键
+                    exercise = Exercise.objects.create(**exercise_data)
+                    created_exercises.append(exercise)
+
+                    # 保存映射，后续处理关联对象
+                    exercise_id_to_data[exercise.exercise_id] = data
                 except Exception as e:
-                    logger.error(f"Bulk create exercises failed: {str(e)}")
-                    raise
+                    logger.error(f"Failed to create exercise: {str(e)}")
+                    continue
 
             # 处理更新
             updated_exercises = []
